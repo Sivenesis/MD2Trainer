@@ -46,3 +46,7 @@ venv.bak/
 # Temporary scratch logs
 *.log
 *.zip
+
+# Local diagnostics, inspection scripts, and development tools
+.local/
+.ruff_cache/

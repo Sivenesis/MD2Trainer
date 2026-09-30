@@ -1,306 +1,607 @@
-#!/usr/bin/env python3
-"""
-MINECRAFT DUNGEONS II - STANDALONE NATIVE TRAINER
-Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
-Direct Win32 Memory Access - Zero Debugger, Zero Watchdog Conflicts, Zero Dependencies.
-"""
+"""Tkinter interface and gameplay commands for the native trainer."""
 
-import sys
 import time
-import struct
 import tkinter as tk
-from tkinter import ttk, messagebox
-import ctypes
-from ctypes import wintypes
+from tkinter import messagebox, ttk
 
-k32 = ctypes.windll.kernel32
-psapi = ctypes.windll.psapi
+from trainer_memory import MemoryAccessError, MemoryManager, finite_float
+from trainer_offsets import CHAINS
 
-# Process Memory Access Constants
-PROCESS_QUERY_INFORMATION = 0x0400
-PROCESS_VM_READ = 0x0010
-PROCESS_VM_WRITE = 0x0020
-PROCESS_VM_OPERATION = 0x0008
-PROCESS_ACCESS = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
-
-# Pointer Chain Definitions (Base Module + GEngine 0x0B0577C8)
-CHAINS = {
-    # Currencies & Inventory (AttrSet [12] = ATR_Currency at 0x60)
-    "emeralds_current":     ['9C', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emeralds_base":        ['98', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emeralds_cap_cur":     ['AC', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emeralds_cap_base":    ['A8', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Echo Shards / SpringStone (Blue Shard in Screenshot 1, AttrSet [12] at +0x100)
-    "springstone_current":  ['10C', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "springstone_base":     ['108', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "springstone_cap_cur":  ['11C', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "springstone_cap_base": ['118', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Enchantment Points (Purple Diamond 51/1 in Screenshot 1, AttrSet [13] = ATR_XP at 0x68)
-    "ench_points_cur":      ['DC', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ench_points_base":     ['D8', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ench_points_cap_cur":  ['FC', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ench_points_cap_base": ['F8', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Souls (AttrSet [11] = ATR_Soul at 0x58)
-    "souls_current":        ['9C', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "souls_base":           ['98', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "souls_cap_cur":        ['AC', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "souls_cap_base":       ['A8', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Arrows (Ammo, AttrSet [3] = ATR_RangedAttack at 0x18)
-    "ammo_current":         ['BC', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ammo_base":            ['B8', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ammo_max_cur":         ['CC', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ammo_max_base":        ['C8', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "rapid_fire_cur":       ['9C', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "rapid_fire_base":      ['98', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Currency Gain Multipliers (AttrSet [12] = ATR_Currency at 0x60, AttrSet [11] = ATR_Soul at 0x58)
-    "emerald_increase_cur":    ['CC', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emerald_increase_base":   ['C8', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emerald_max_add_cur":     ['EC', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emerald_max_add_base":    ['E8', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emerald_drop_chance_cur": ['DC', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "emerald_drop_chance_base":['D8', '60', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "soul_gather_cur":         ['DC', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "soul_gather_base":        ['D8', '58', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Level & Progression (AttrSet [13] = ATR_XP at 0x68)
-    "level":                ['BC', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "xp_current":           ['9C', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "xp_needed":            ['AC', '68', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Survival & Combat (AttrSet [8] = ATR_Health at 0x40, AttrSet [0] = ATR_Resistance at 0x0)
-    "health_current":          ['9C', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "health_max":              ['BC', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "shield_current":          ['16C', '0', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "shield_max":              ['18C', '0', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "damage_resist":           ['9C', '0', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "actor_invincible":        ['5A', '2F8', '30', '0', '38', '1248'],
-    "artifact_cd":             ['9C', '20', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "artifact_cd_base":        ['98', '20', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_cd":               ['13C', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_cd_base":          ['138', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_base_cd_cur":      ['12C', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_base_cd_base":     ['128', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_charges_cur":      ['16C', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_charges_base":     ['168', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_max_charges_cur":  ['17C', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "potion_max_charges_base": ['178', '40', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "crit_chance":             ['21C', '38', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "crit_multiplier":         ['24C', '38', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "melee_dmg_mult":          ['1BC', '38', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "ranged_dmg_mult":         ['1CC', '38', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "melee_speed":             ['9C', '10', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "melee_reach":             ['AC', '10', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "multishot_chance":        ['13C', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "multishot_count":         ['14C', '18', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Movement & Physics (AttrSet [1] = ATR_Movement at 0x8)
-    "move_mult_cur":           ['AC', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "move_mult_base":          ['A8', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "jump_velocity":           ['1A8', '330', '2F8', '30', '0', '38', '1248'],
-    "gravity":                 ['1A0', '330', '2F8', '30', '0', '38', '1248'],
-    "roll_cd":                 ['12C', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "roll_cd_base":            ['128', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "roll_charges_cur":        ['14C', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "roll_charges_base":       ['148', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "roll_max_charges_cur":    ['15C', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "roll_max_charges_base":   ['158', '8', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "time_dilation":           ['68', '2F8', '30', '0', '38', '1248'],
-
-    # Loot & Vendors (AttrSet [16] = ATR_Loot at 0x80, AttrSet [9] = ATR_MerchantInfo at 0x48)
-    "loot_multiplier":  ['9C', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "loot_mult_base":   ['98', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "max_payouts_cur":  ['AC', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "max_payouts_base": ['A8', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "rarity_bonus":     ['BC', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "rarity_bonus_base":['B8', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "drop_chance":      ['CC', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "drop_chance_base": ['C8', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "drop_duplication": ['DC', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "drop_dup_base":    ['D8', '80', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "merchant_charges": ['9C', '48', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "merchant_upg":     ['CC', '48', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "enchantsmith_upg": ['EC', '48', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-    "blacksmith_upg":   ['10C', '48', '10A8', 'A20', '2F8', '30', '0', '38', '1248'],
-
-    # Engine & Debug
-    "debug_flag":       ['94D', '30', '0', '38', '1248'],
-    "debug_ui":         ['748', '30', '0', '38', '1248'],
-    "camera_fov":       ['2C0', '360', '30', '0', '38', '1248'],
+SESSION_VIEWS = {
+    "disconnected": ("GAME NOT CONNECTED", "Launch the game. Detection is automatic.", "#8fa2b8"),
+    "loading": (
+        "WAITING FOR CHARACTER",
+        "Load a character into a camp or mission to see available options.",
+        "#edc58c",
+    ),
+    "client": (
+        "MULTIPLAYER CLIENT",
+        "All commands available. Speed, jump and arrows reported working; server-managed changes such as balances may be ignored.",
+        "#64d8cb",
+    ),
+    "local": (
+        "LOCAL AUTHORITY · SOLO / HOST",
+        "Editing options are available. This detection cannot distinguish offline solo from a local host.",
+        "#70ddb1",
+    ),
+    "unknown": (
+        "SESSION NOT RECOGNIZED",
+        "Editing options are hidden until the session can be identified. Check game compatibility.",
+        "#edc58c",
+    ),
 }
 
-class MemoryManager:
-    def __init__(self):
-        self.pid = None
-        self.base_addr = None
-        self.h_proc = None
 
-    def attach(self):
-        if self.h_proc:
-            k32.CloseHandle(self.h_proc)
-            self.h_proc = None
-        self.pid = None
-        self.base_addr = None
+class FlowFrame(tk.Frame):
+    """Wrap controls to the available width instead of clipping a long row."""
 
-        pids = (wintypes.DWORD * 2048)()
-        cbNeeded = wintypes.DWORD()
-        k32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(cbNeeded))
-        num = cbNeeded.value // 4
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.items = []
+        self.bind("<Configure>", self.arrange)
 
-        for i in range(num):
-            pid = pids[i]
-            if pid == 0: continue
-            h = k32.OpenProcess(0x0410, False, pid)
-            if h:
-                HMODULE = ctypes.c_void_p
-                hMods = (HMODULE * 1)()
-                cb = wintypes.DWORD()
-                psapi.EnumProcessModulesEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(HMODULE), wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
-                if psapi.EnumProcessModulesEx(h, hMods, ctypes.sizeof(hMods), ctypes.byref(cb), 3):
-                    mod_name = (ctypes.c_char * 260)()
-                    psapi.GetModuleBaseNameA(h, HMODULE(hMods[0]), mod_name, 260)
-                    if mod_name.value.decode(errors='ignore').lower() == 'dungeons-wingdk-shipping.exe':
-                        self.pid = pid
-                        self.base_addr = hMods[0]
-                        k32.CloseHandle(h)
-                        break
-                k32.CloseHandle(h)
+    def add(self, widget):
+        self.items.append(widget)
+        self.arrange()
 
-        if not self.pid:
-            return False
-
-        self.h_proc = k32.OpenProcess(PROCESS_ACCESS, False, self.pid)
-        return self.h_proc is not None and self.h_proc != 0
-
-    def resolve_chain(self, offsets_list):
-        if not self.h_proc or not self.base_addr:
-            return None
-        curr_addr = self.base_addr + 0x0B0577C8
-        buf8 = ctypes.create_string_buffer(8)
-        for off_str in reversed(offsets_list):
-            off = int(off_str, 16)
-            res = k32.ReadProcessMemory(self.h_proc, ctypes.c_void_p(curr_addr), buf8, 8, None)
-            if not res:
-                return None
-            ptr = struct.unpack('<Q', buf8.raw)[0]
-            if not ptr or ptr < 0x10000:
-                return None
-            curr_addr = ptr + off
-        return curr_addr
-
-    def read_float(self, key):
-        addr = self.resolve_chain(CHAINS[key])
-        if not addr: return None
-        buf4 = ctypes.create_string_buffer(4)
-        if k32.ReadProcessMemory(self.h_proc, ctypes.c_void_p(addr), buf4, 4, None):
-            return struct.unpack('<f', buf4.raw)[0]
-        return None
-
-    def write_float(self, key, val):
-        addr = self.resolve_chain(CHAINS[key])
-        if not addr: return False
-        buf4 = struct.pack('<f', float(val))
-        bytes_written = ctypes.c_size_t()
-        return bool(k32.WriteProcessMemory(self.h_proc, ctypes.c_void_p(addr), buf4, 4, ctypes.byref(bytes_written)))
-
-    def read_byte(self, key):
-        addr = self.resolve_chain(CHAINS[key])
-        if not addr: return None
-        buf1 = ctypes.create_string_buffer(1)
-        if k32.ReadProcessMemory(self.h_proc, ctypes.c_void_p(addr), buf1, 1, None):
-            return struct.unpack('<B', buf1.raw)[0]
-        return None
-
-    def write_byte(self, key, val):
-        addr = self.resolve_chain(CHAINS[key])
-        if not addr: return False
-        buf1 = struct.pack('<B', int(val))
-        bytes_written = ctypes.c_size_t()
-        return bool(k32.WriteProcessMemory(self.h_proc, ctypes.c_void_p(addr), buf1, 1, ctypes.byref(bytes_written)))
+    def arrange(self, event=None):
+        width = max(200, self.winfo_width())
+        x = y = row_height = 0
+        for widget in self.items:
+            item_width = min(width, widget.winfo_reqwidth())
+            item_height = widget.winfo_reqheight()
+            if x and x + item_width > width:
+                x = 0
+                y += row_height + 8
+                row_height = 0
+            widget.place(x=x, y=y, width=item_width, height=item_height)
+            x += item_width + 8
+            row_height = max(row_height, item_height)
+        self.configure(height=y + row_height)
 
 
 class TrainerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Minecraft Dungeons II - Native Trainer v1.0.1")
-        self.geometry("880x730")
-        self.minsize(820, 650)
-        self.configure(bg="#181825")
+        self.geometry("1160x840")
+        self.minsize(960, 720)
+        self.configure(bg="#0b111b")
 
         self.mem = MemoryManager()
+        self.next_connect_at = 0.0
+        self.value_rows = []
+        self.edit_tabs = []
+        self.session_kind = None
+        self.session_identity = None
+        self.navigation = {}
         self.god_mode_active = False
+        self._god_original = None
+        self._god_original_pid = None
         self.freeze_souls_active = False
         self.auto_refill_ammo_active = False
         self.lock_speed_active = False
         self.locked_speed_val = 1.0
         self.infinite_potions_active = False
         self.infinite_roll_active = False
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.setup_styles()
         self.create_widgets()
 
         self.try_connect()
-        self.after(500, self.refresh_loop)
+        self._refresh_job = self.after(500, self.refresh_loop)
 
     def setup_styles(self):
         style = ttk.Style(self)
-        style.theme_use('clam')
-        style.configure('TNotebook', background="#181825", borderwidth=0)
-        style.configure('TNotebook.Tab', background="#1e1e2e", foreground="#cdd6f4", padding=[18, 6], font=('Segoe UI', 10, 'bold'))
-        style.map('TNotebook.Tab', background=[('selected', '#313244')], foreground=[('selected', '#89b4fa')])
-        style.configure('TFrame', background="#181825")
-        style.configure('Card.TFrame', background="#1e1e2e", relief='flat')
-        style.configure('TLabel', background="#1e1e2e", foreground="#cdd6f4", font=('Segoe UI', 9))
-        style.configure('Header.TLabel', background="#181825", foreground="#89b4fa", font=('Segoe UI', 12, 'bold'))
-        style.configure('Status.TLabel', background="#181825", foreground="#a6e3a1", font=('Segoe UI', 9, 'bold'))
-        style.configure('Value.TLabel', background="#1e1e2e", foreground="#f9e2af", font=('Consolas', 10, 'bold'))
-        style.configure('TButton', background="#313244", foreground="#cdd6f4", font=('Segoe UI', 9), borderwidth=0, padding=[6, 3])
-        style.map('TButton', background=[('active', '#45475a'), ('pressed', '#585b70')])
+        style.theme_use("clam")
+        style.configure(
+            "TNotebook",
+            background="#0b111b",
+            borderwidth=0,
+            bordercolor="#0b111b",
+            lightcolor="#0b111b",
+            darkcolor="#0b111b",
+        )
+        style.layout("TNotebook.Tab", [])
+        style.configure(
+            "TNotebook.Tab",
+            background="#131e2c",
+            foreground="#e6eef8",
+            padding=[18, 6],
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#223146")],
+            foreground=[("selected", "#64d8cb")],
+        )
+        style.configure("TFrame", background="#0b111b")
+        style.configure("Card.TFrame", background="#131e2c", relief="flat")
+        style.configure("TLabel", background="#131e2c", foreground="#e6eef8", font=("Segoe UI", 9))
+        style.configure(
+            "Header.TLabel",
+            background="#0b111b",
+            foreground="#64d8cb",
+            font=("Segoe UI", 12, "bold"),
+        )
+        style.configure(
+            "Status.TLabel",
+            background="#0b111b",
+            foreground="#70ddb1",
+            font=("Segoe UI", 9, "bold"),
+        )
+        style.configure(
+            "Value.TLabel",
+            background="#131e2c",
+            foreground="#edc58c",
+            font=("Consolas", 10, "bold"),
+        )
+        style.configure(
+            "TButton",
+            background="#223146",
+            foreground="#e6eef8",
+            font=("Segoe UI", 10),
+            borderwidth=0,
+            padding=[12, 8],
+            relief="flat",
+            focuscolor="#223146",
+        )
+        style.map(
+            "TButton",
+            background=[("active", "#30475e"), ("pressed", "#3c566e")],
+            bordercolor=[("focus", "#64d8cb")],
+        )
+        style.configure(
+            "Accent.TButton",
+            background="#64d8cb",
+            foreground="#081c18",
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.map("Accent.TButton", background=[("active", "#70ddb1")])
+        for scrollbar in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
+            style.configure(
+                scrollbar,
+                background="#223146",
+                troughcolor="#0b111b",
+                borderwidth=0,
+                arrowsize=10,
+                bordercolor="#0b111b",
+                lightcolor="#223146",
+                darkcolor="#223146",
+                arrowcolor="#8fa2b8",
+            )
 
     def create_widgets(self):
-        # Top Header Bar
-        top_bar = tk.Frame(self, bg="#181825", padx=16, pady=10)
-        top_bar.pack(fill='x')
+        main = tk.Frame(self, bg="#0b111b", padx=24, pady=18)
+        main.pack(fill="both", expand=True)
+        top_bar = tk.Frame(main, bg="#0b111b")
+        top_bar.pack(fill="x", pady=(0, 14))
+        top_bar.columnconfigure(0, weight=1)
+        tk.Label(
+            top_bar,
+            text="DUNGEONS II  /  TRAINER",
+            bg="#0b111b",
+            fg="#e6eef8",
+            font=("Segoe UI", 16, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self.session_mode_label = tk.Label(
+            top_bar,
+            text="Waiting for game",
+            bg="#0b111b",
+            fg="#8fa2b8",
+            font=("Segoe UI", 9),
+            anchor="e",
+        )
+        self.session_mode_label.grid(row=0, column=1, padx=16)
+        ttk.Button(top_bar, text="Reconnect", command=self.try_connect).grid(
+            row=0, column=2, sticky="e"
+        )
 
-        title_lbl = tk.Label(top_bar, text="MINECRAFT DUNGEONS II - NATIVE TRAINER v1.0.1", font=('Segoe UI', 13, 'bold'), bg="#181825", fg="#89b4fa")
-        title_lbl.pack(side='left')
+        session_card = tk.Frame(
+            main,
+            bg="#122b2e",
+            padx=14,
+            pady=10,
+            highlightthickness=1,
+            highlightbackground="#234047",
+        )
+        session_card.pack(fill="x", pady=(0, 14))
+        self.session_badge = tk.Label(
+            session_card, text="", bg="#122b2e", font=("Segoe UI", 13, "bold"), anchor="w"
+        )
+        self.session_badge.pack(fill="x")
+        self.session_hint = tk.Label(
+            session_card,
+            text="",
+            bg="#122b2e",
+            fg="#b7c7d9",
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+        )
+        self.session_hint.pack(fill="x", pady=(4, 0))
+        session_card.bind(
+            "<Configure>",
+            lambda event: self.session_hint.configure(wraplength=max(200, event.width - 40)),
+        )
 
-        self.status_lbl = tk.Label(top_bar, text="Searching for game process...", font=('Segoe UI', 9, 'bold'), bg="#181825", fg="#f38ba8")
-        self.status_lbl.pack(side='right', padx=10)
+        self.nav_frame = tk.Frame(main, bg="#0e1622", padx=4, pady=4)
+        self.nav_frame.pack(fill="x", pady=(0, 12))
+        self.page_title = tk.Label(
+            main,
+            text="Overview",
+            bg="#0b111b",
+            fg="#e6eef8",
+            font=("Segoe UI", 15, "bold"),
+            anchor="w",
+        )
+        self.page_title.pack(fill="x", pady=(0, 10))
 
-        refresh_btn = ttk.Button(top_bar, text="Reconnect", command=self.try_connect)
-        refresh_btn.pack(side='right')
-
-        # Notebook (Clean concise tab names)
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill='both', expand=True, padx=14, pady=8)
-
+        self.status_lbl = tk.Label(
+            main,
+            text="Searching for the game...",
+            font=("Segoe UI", 9),
+            bg="#0b111b",
+            fg="#8fa2b8",
+            anchor="w",
+            justify="left",
+        )
+        self.status_lbl.pack(side="bottom", fill="x", pady=(14, 0))
+        main.bind(
+            "<Configure>",
+            lambda event: self.status_lbl.configure(wraplength=max(200, event.width - 56)),
+        )
+        self.notebook = ttk.Notebook(main, takefocus=False)
+        self.notebook.pack(fill="both", expand=True)
+        self.notebook.bind("<<NotebookTabChanged>>", self.update_navigation)
+        self.tab_overview = self.create_tab("Overview", editing=False)
         self.tab_currencies = self.create_tab("Currencies")
         self.tab_combat = self.create_tab("Combat")
         self.tab_movement = self.create_tab("Movement")
         self.tab_progression = self.create_tab("Progression")
         self.tab_developer = self.create_tab("Developer")
-
         self.build_currencies_tab()
         self.build_combat_tab()
         self.build_movement_tab()
         self.build_progression_tab()
         self.build_developer_tab()
+        self.build_overview()
+        self.style_toggle_rows()
+        self.set_session_view("disconnected")
+        self.update_navigation()
+        self.bind_all("<MouseWheel>", self.scroll_active_page, add="+")
 
-    def create_tab(self, name):
-        frame = tk.Frame(self.notebook, bg="#1e1e2e", padx=16, pady=16)
-        self.notebook.add(frame, text=name)
+    def update_navigation(self, event=None):
+        selected = self.notebook.select()
+        for tab, button in self.navigation.items():
+            active = str(tab) == selected
+            button.config(
+                bg="#1c3540" if active else "#0e1622", fg="#85ecdc" if active else "#8fa2b8"
+            )
+        if selected:
+            title = self.notebook.tab(selected, "text")
+            self.page_title.config(text="Advanced" if title == "Developer" else title)
+
+    def scroll_active_page(self, event):
+        if not self.notebook.select():
+            return
+        tab = self.nametowidget(self.notebook.select())
+        canvas = next(
+            (child for child in tab.winfo_children() if isinstance(child, tk.Canvas)), None
+        )
+        if canvas and canvas.yview() != (0.0, 1.0):
+            canvas.yview_scroll(-int(event.delta / 120), "units")
+
+    def create_tab(self, name, editing=True):
+        container = tk.Frame(self.notebook, bg="#0b111b")
+        self.notebook.add(container, text=name)
+        label = "Advanced" if name == "Developer" else name
+        button = tk.Button(
+            self.nav_frame,
+            text=label,
+            anchor="center",
+            relief="flat",
+            bd=0,
+            bg="#0e1622",
+            fg="#8fa2b8",
+            activebackground="#1c3540",
+            activeforeground="#85ecdc",
+            font=("Segoe UI", 10),
+            padx=14,
+            pady=9,
+            cursor="hand2",
+            command=lambda: self.notebook.select(container),
+        )
+        button.pack(side="left", padx=2)
+        self.navigation[container] = button
+        if editing:
+            self.edit_tabs.append(container)
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+        canvas = tk.Canvas(container, bg="#0b111b", highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        horizontal = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        vertical = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+
+        def update_scrollbar(scrollbar, first, last):
+            scrollbar.set(first, last)
+            if float(first) <= 0 and float(last) >= 1:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid()
+
+        canvas.configure(
+            xscrollcommand=lambda first, last: update_scrollbar(horizontal, first, last),
+            yscrollcommand=lambda first, last: update_scrollbar(vertical, first, last),
+        )
+        frame = tk.Frame(canvas, bg="#0b111b", padx=0, pady=0)
+        frame.columnconfigure(0, weight=1)
+        window = canvas.create_window((0, 0), window=frame, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+        frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
         return frame
 
+    def style_toggle_rows(self):
+        for tab in (self.tab_currencies, self.tab_combat, self.tab_movement):
+            for frame in tab.winfo_children():
+                if not isinstance(frame, tk.Frame) or getattr(frame, "is_option_card", False):
+                    continue
+                children = frame.winfo_children()
+                if not children or not isinstance(children[0], tk.Button):
+                    continue
+                frame.grid_configure(sticky="ew", pady=(0, 12))
+                frame.configure(
+                    padx=16, pady=14, highlightthickness=1, highlightbackground="#223146"
+                )
+                for index, child in enumerate(children):
+                    child.pack_forget()
+                    child.pack(
+                        anchor="w", fill="x" if index else "none", pady=(8, 0) if index else 0
+                    )
+                    if isinstance(child, tk.Label):
+                        child.configure(justify="left", anchor="w", font=("Segoe UI", 9))
+                        frame.bind(
+                            "<Configure>",
+                            lambda event, label=child: label.configure(
+                                wraplength=max(180, event.width - 36)
+                            ),
+                            add="+",
+                        )
+
+    def build_overview(self):
+        frame = self.tab_overview
+        frame.columnconfigure(0, weight=1)
+        self.overview_note = tk.Label(
+            frame,
+            text="",
+            bg="#0b111b",
+            fg="#8fa2b8",
+            font=("Segoe UI", 10),
+            wraplength=680,
+            justify="left",
+            anchor="w",
+        )
+        self.overview_note.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        host = tk.Frame(frame, bg="#0b111b")
+        host.grid(row=1, column=0, sticky="ew")
+        self.stat_cards = []
+        definitions = (
+            ("EMERALDS", "emeralds_current", "Available balance", "#70ddb1", "diamond"),
+            ("ECHO SHARDS", "springstone_current", "Available balance", "#80baff", "shard"),
+            ("ENCHANTMENT", "ench_points_cur", "Available points", "#c8a4ff", "diamond"),
+            ("CHARACTER LEVEL", "level", "Your progression", "#edc58c", "bars"),
+            ("HEALTH", "health_current", "Current health", "#f58a92", "health"),
+            ("ARROWS", "ammo_current", "Ready to fire", "#a4bdcf", "arrow"),
+        )
+        for title, key, detail, accent, icon in definitions:
+            card = tk.Frame(
+                host,
+                bg="#131e2c",
+                padx=18,
+                pady=18,
+                height=152,
+                highlightthickness=1,
+                highlightbackground="#223146",
+            )
+            card.grid_propagate(False)
+            card.columnconfigure(0, weight=1)
+            tk.Label(
+                card,
+                text=title,
+                bg="#131e2c",
+                fg="#8fa2b8",
+                font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="w")
+            mark = tk.Canvas(card, width=28, height=28, bg="#131e2c", highlightthickness=0)
+            mark.grid(row=0, column=1, rowspan=2, sticky="ne")
+            if icon in ("diamond", "shard"):
+                mark.create_polygon(14, 2, 24, 14, 14, 26, 4, 14, fill="", outline=accent, width=2)
+                mark.create_line(14, 5, 14, 23, fill=accent, width=2)
+            elif icon == "health":
+                mark.create_line(14, 5, 14, 23, fill=accent, width=4)
+                mark.create_line(5, 14, 23, 14, fill=accent, width=4)
+            elif icon == "bars":
+                for i in range(3):
+                    mark.create_rectangle(
+                        4 + i * 8, 18 - i * 6, 8 + i * 8, 25, fill=accent, outline=""
+                    )
+            else:
+                mark.create_line(5, 24, 23, 6, fill=accent, width=2)
+                mark.create_line(14, 6, 23, 6, 23, 15, fill=accent, width=2)
+            value = tk.Label(
+                card,
+                text="\u2014",
+                bg="#131e2c",
+                fg="#e6eef8",
+                font=("Segoe UI", 29, "bold"),
+                anchor="w",
+            )
+            value.grid(row=1, column=0, sticky="w", pady=(12, 0))
+            tk.Label(
+                card, text=detail, bg="#131e2c", fg="#637991", font=("Segoe UI", 9), anchor="w"
+            ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+            self.value_rows.append((value, key, False))
+            self.stat_cards.append(card)
+
+        def arrange_cards(event):
+            columns = 3 if event.width >= 720 else 2
+            for i in range(3):
+                host.columnconfigure(
+                    i, weight=1 if i < columns else 0, uniform="stats" if i < columns else ""
+                )
+            for i, card in enumerate(self.stat_cards):
+                card.grid(
+                    row=i // columns,
+                    column=i % columns,
+                    padx=(0, 12) if i % columns < columns - 1 else 0,
+                    pady=(0, 12),
+                    sticky="ew",
+                )
+            self.overview_note.configure(wraplength=max(200, event.width - 8))
+
+        host.bind("<Configure>", arrange_cards)
+        footer = tk.Frame(
+            frame,
+            bg="#131e2c",
+            padx=18,
+            pady=16,
+            highlightthickness=1,
+            highlightbackground="#223146",
+        )
+        footer.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        footer.columnconfigure(0, weight=1)
+        tk.Label(
+            footer,
+            text="Need to troubleshoot?",
+            bg="#131e2c",
+            fg="#e6eef8",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self.copy_feedback = tk.Label(
+            footer,
+            text="Copy the session details to help investigate an issue.",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+        )
+        self.copy_feedback.grid(row=1, column=0, sticky="ew", padx=(0, 12), pady=(5, 0))
+        footer.bind(
+            "<Configure>",
+            lambda event: self.copy_feedback.configure(wraplength=max(160, event.width - 205)),
+        )
+        ttk.Button(footer, text="Copy details", command=self.copy_session_diagnostics).grid(
+            row=0, column=1, rowspan=2, sticky="e"
+        )
+
+    def copy_session_diagnostics(self):
+        lines = [
+            f"Session: {self.session_badge.cget('text')}",
+            f"Process: {self.mem.pid or 'not connected'}",
+            f"Local role: {self.mem.read_byte('player_role')}",
+            f"Remote role: {self.mem.read_byte('player_remote_role')}",
+            f"Status: {self.status_lbl.cget('text')}",
+        ]
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(lines))
+        self.copy_feedback.config(text="Session diagnostics copied.")
+
+    def reset_continuous_options(self):
+        for flag, button, text in (
+            ("god_mode_active", self.btn_god, "TOGGLE GOD MODE (OFF)"),
+            ("freeze_souls_active", self.btn_freeze_souls, "FREEZE SOULS (OFF)"),
+            ("auto_refill_ammo_active", self.btn_auto_refill, "AUTO-REFILL ARROWS (OFF)"),
+            ("lock_speed_active", self.btn_lock_speed, "LOCK SPEED (OFF)"),
+            ("infinite_potions_active", self.btn_infinite_potions, "INFINITE POTIONS (OFF)"),
+            ("infinite_roll_active", self.btn_infinite_roll, "INFINITE ROLL (OFF)"),
+        ):
+            setattr(self, flag, False)
+            button.config(text=text, bg="#223146", fg="#f58a92")
+        self._god_original = None
+        self._god_original_pid = None
+
+    def set_session_view(self, kind, identity=None):
+        if kind not in SESSION_VIEWS:
+            kind = "unknown"
+        changed_character = self.session_identity is not None and self.session_identity != identity
+        if (
+            kind not in ("local", "client")
+            or changed_character
+            or (self.session_kind in ("local", "client") and kind != self.session_kind)
+        ):
+            self.reset_continuous_options()
+        if kind != self.session_kind:
+            title, hint, color = SESSION_VIEWS[kind]
+            self.session_badge.config(text=title, fg=color)
+            self.session_hint.config(text=hint)
+            self.copy_feedback.config(text="Copy the session details to help investigate an issue.")
+            self.overview_note.config(
+                text=(
+                    "Use the editing tabs for this session. Effects and persistence still need in-game validation."
+                    if kind == "local"
+                    else (
+                        "All commands remain available in multiplayer. A successful memory write does not confirm an in-game effect."
+                        if kind == "client"
+                        else "Live readings only. Available commands appear automatically when the session supports them."
+                    )
+                )
+            )
+            for tab in self.edit_tabs:
+                if kind in ("local", "client"):
+                    self.notebook.add(tab)
+                    self.navigation[tab].pack(side="left", padx=2)
+                else:
+                    self.notebook.hide(tab)
+                    self.navigation[tab].pack_forget()
+            if kind not in ("local", "client"):
+                self.notebook.select(self.tab_overview.master.master)
+        self.session_mode_label.config(
+            text={
+                "local": "Local control",
+                "client": "Multiplayer controls",
+                "loading": "Loading character",
+                "unknown": "Session unknown",
+                "disconnected": "Waiting for game",
+            }[kind]
+        )
+        self.update_navigation()
+        self.session_kind = kind
+        self.session_identity = identity
+
     def try_connect(self):
+        self.next_connect_at = time.monotonic() + 3.0
+        self.clear_values()
+        self.set_session_view("disconnected")
         if self.mem.attach():
-            self.status_lbl.config(text=f"Attached: Dungeons-WinGDK-Shipping.exe (PID {self.mem.pid})", fg="#a6e3a1")
+            self.set_session_view("loading")
+            self.status_lbl.config(
+                text=f"Attached (PID {self.mem.pid}); checking character...", fg="#edc58c"
+            )
         else:
-            self.status_lbl.config(text="Game not found (Waiting for Dungeons-WinGDK-Shipping.exe)", fg="#f38ba8")
+            self.status_lbl.config(text=self.mem.last_error, fg="#f58a92")
+
+    def clear_values(self):
+        for label, key, is_byte in self.value_rows:
+            label.config(text="---")
+
+    def on_close(self):
+        if self._refresh_job:
+            self.after_cancel(self._refresh_job)
+        self.mem.close()
+        self.destroy()
+
+    def report_callback_exception(self, exc_type, exc_value, traceback):
+        if isinstance(exc_value, (MemoryAccessError, ValueError, OverflowError)):
+            messagebox.showerror("Operation failed", str(exc_value), parent=self)
+        else:
+            super().report_callback_exception(exc_type, exc_value, traceback)
 
     # ==========================================
     # Tab 1: Currencies
@@ -309,86 +610,165 @@ class TrainerApp(tk.Tk):
         f = self.tab_currencies
 
         # Emeralds (Green Gem in Game, Cap: 9,999)
-        self.lbl_emeralds = self.add_row(f, 0, "Emeralds (Green Gem):", "emeralds_current",
-                                         [("+1,000", lambda: self.adjust_emeralds(1000)),
-                                          ("Max (9,999)", lambda: self.set_emeralds(9999))],
-                                         custom_entry=True, setter=self.set_emeralds)
+        self.lbl_emeralds = self.add_row(
+            f,
+            0,
+            "Emeralds (Green Gem):",
+            "emeralds_current",
+            [
+                ("+1,000", lambda: self.adjust_emeralds(1000)),
+                ("Max (9,999)", lambda: self.set_emeralds(9999)),
+            ],
+            custom_entry=True,
+            setter=self.set_emeralds,
+        )
 
         # Echo Shards / SpringStone (Blue Shard in Screenshot 1)
-        self.lbl_springstone = self.add_row(f, 1, "Echo Shards (Blue Shard):", "springstone_current",
-                                            [("+500", lambda: self.adjust_springstone(500)),
-                                             ("Max (9,999)", lambda: self.set_springstone(9999))],
-                                            custom_entry=True, setter=self.set_springstone)
+        self.lbl_springstone = self.add_row(
+            f,
+            1,
+            "Echo Shards (Blue Shard):",
+            "springstone_current",
+            [
+                ("+500", lambda: self.adjust_springstone(500)),
+                ("Max (9,999)", lambda: self.set_springstone(9999)),
+            ],
+            custom_entry=True,
+            setter=self.set_springstone,
+        )
 
         # Enchantment Points (Purple Diamond 51/1 in Screenshot 1)
-        self.lbl_ench = self.add_row(f, 2, "Enchantment Points (Purple):", "ench_points_cur",
-                                     [("+5 Points", lambda: self.adjust_ench_points(5)),
-                                      ("Set 99 Points", lambda: self.set_ench_points(99))],
-                                     custom_entry=True, setter=self.set_ench_points)
+        self.lbl_ench = self.add_row(
+            f,
+            2,
+            "Enchantment Points (Purple):",
+            "ench_points_cur",
+            [
+                ("+5 Points", lambda: self.adjust_ench_points(5)),
+                ("Set 99 Points", lambda: self.set_ench_points(99)),
+            ],
+            custom_entry=True,
+            setter=self.set_ench_points,
+        )
 
         # Currency Gain Multiplier (Emeralds & Soul Gathering Scale)
-        self.lbl_curr_mult = self.add_row(f, 3, "Currency Gain Multiplier:", "emerald_increase_cur",
-                                          [("2x Gain", lambda: self.set_currency_gain(2.0)),
-                                           ("3x Gain", lambda: self.set_currency_gain(3.0)),
-                                           ("5x Gain", lambda: self.set_currency_gain(5.0)),
-                                           ("10x Gain", lambda: self.set_currency_gain(10.0)),
-                                           ("Reset (1x)", lambda: self.set_currency_gain(1.0))],
-                                          custom_entry=True, setter=self.set_currency_gain)
+        self.lbl_curr_mult = self.add_row(
+            f,
+            3,
+            "Currency Gain Multiplier:",
+            "emerald_increase_cur",
+            [
+                ("2x Gain", lambda: self.set_currency_gain(2.0)),
+                ("3x Gain", lambda: self.set_currency_gain(3.0)),
+                ("5x Gain", lambda: self.set_currency_gain(5.0)),
+                ("10x Gain", lambda: self.set_currency_gain(10.0)),
+                ("Reset (1x)", lambda: self.set_currency_gain(1.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_currency_gain,
+        )
 
         # Souls (with dedicated Freeze Souls toggle)
-        self.lbl_souls = self.add_row(f, 4, "Souls (Soul Energy):", "souls_current",
-                                      [("+500", lambda: self.adjust_souls(500)),
-                                       ("Max (99,999)", lambda: self.set_souls(99999))],
-                                      custom_entry=True, setter=self.set_souls)
+        self.lbl_souls = self.add_row(
+            f,
+            4,
+            "Souls (Soul Energy):",
+            "souls_current",
+            [
+                ("+500", lambda: self.adjust_souls(500)),
+                ("Max (99,999)", lambda: self.set_souls(99999)),
+            ],
+            custom_entry=True,
+            setter=self.set_souls,
+        )
 
         # Freeze Souls Toggle Row
-        freeze_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
-        freeze_frame.grid(row=5, column=0, columnspan=5, sticky='w')
-        self.btn_freeze_souls = tk.Button(freeze_frame, text="FREEZE SOULS (OFF)", font=('Segoe UI', 9, 'bold'),
-                                          bg="#313244", fg="#f38ba8", padx=12, pady=4, relief='flat',
-                                          command=self.toggle_freeze_souls)
-        self.btn_freeze_souls.pack(side='left')
-        lbl_souls_hint = tk.Label(freeze_frame, text="Locks Souls to Max capacity continuously (Unlimited Artifact activations)",
-                                  bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        lbl_souls_hint.pack(side='left', padx=10)
+        freeze_frame = tk.Frame(f, bg="#131e2c", pady=2)
+        freeze_frame.grid(row=5, column=0, columnspan=5, sticky="w")
+        self.btn_freeze_souls = tk.Button(
+            freeze_frame,
+            text="FREEZE SOULS (OFF)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=12,
+            pady=4,
+            relief="flat",
+            command=self.toggle_freeze_souls,
+        )
+        self.btn_freeze_souls.pack(side="left")
+        lbl_souls_hint = tk.Label(
+            freeze_frame,
+            text="Locks Souls to Max capacity continuously (Unlimited Artifact activations)",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        lbl_souls_hint.pack(side="left", padx=10)
 
         # Arrows (Ammo) - Custom amount, respects lower values, auto-refill toggle
-        self.lbl_ammo = self.add_row(f, 6, "Arrows (Ammo Count):", "ammo_current",
-                                     [("Refill (999)", lambda: self.set_ammo(999)),
-                                      ("Max Cap (999)", self.max_ammo_cap)],
-                                     custom_entry=True, setter=self.set_ammo)
+        self.lbl_ammo = self.add_row(
+            f,
+            6,
+            "Arrows (Ammo Count):",
+            "ammo_current",
+            [("Refill (999)", lambda: self.set_ammo(999)), ("Max Cap (999)", self.max_ammo_cap)],
+            custom_entry=True,
+            setter=self.set_ammo,
+        )
 
         # Auto-Refill (Infinite Ammo) Toggle Row
-        refill_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
-        refill_frame.grid(row=7, column=0, columnspan=5, sticky='w')
-        self.btn_auto_refill = tk.Button(refill_frame, text="AUTO-REFILL ARROWS (OFF)", font=('Segoe UI', 9, 'bold'),
-                                         bg="#313244", fg="#f38ba8", padx=12, pady=4, relief='flat',
-                                         command=self.toggle_auto_refill)
-        self.btn_auto_refill.pack(side='left')
-        lbl_refill_hint = tk.Label(refill_frame, text="Infinite Arrows: Keeps ammo topped to max every game tick",
-                                   bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        lbl_refill_hint.pack(side='left', padx=10)
+        refill_frame = tk.Frame(f, bg="#131e2c", pady=2)
+        refill_frame.grid(row=7, column=0, columnspan=5, sticky="w")
+        self.btn_auto_refill = tk.Button(
+            refill_frame,
+            text="AUTO-REFILL ARROWS (OFF)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=12,
+            pady=4,
+            relief="flat",
+            command=self.toggle_auto_refill,
+        )
+        self.btn_auto_refill.pack(side="left")
+        lbl_refill_hint = tk.Label(
+            refill_frame,
+            text="Infinite Arrows: Keeps ammo topped to max every game tick",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        lbl_refill_hint.pack(side="left", padx=10)
 
         # Rapid Fire (Bow Attack Speed)
-        self.lbl_rapid = self.add_row(f, 8, "Rapid Fire (Bow Speed):", "rapid_fire_cur",
-                                      [("Rapid (3x)", lambda: self.set_rapid_fire(3.0)),
-                                       ("Insane (5x)", lambda: self.set_rapid_fire(5.0)),
-                                       ("Reset (1x)", lambda: self.set_rapid_fire(1.0))],
-                                      custom_entry=True, setter=self.set_rapid_fire)
+        self.lbl_rapid = self.add_row(
+            f,
+            8,
+            "Rapid Fire (Bow Speed):",
+            "rapid_fire_cur",
+            [
+                ("Rapid (3x)", lambda: self.set_rapid_fire(3.0)),
+                ("Insane (5x)", lambda: self.set_rapid_fire(5.0)),
+                ("Reset (1x)", lambda: self.set_rapid_fire(1.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_rapid_fire,
+        )
 
     def set_emeralds(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("emeralds_cap_base", max(9999.0, val))
         self.mem.write_float("emeralds_cap_cur", max(9999.0, val))
         self.mem.write_float("emeralds_base", val)
         self.mem.write_float("emeralds_current", val)
 
     def adjust_emeralds(self, delta):
-        cur = self.mem.read_float("emeralds_current") or 0.0
+        cur = self.mem.require_float("emeralds_current")
         self.set_emeralds(cur + delta)
 
     def set_currency_gain(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         if mult <= 1.0:
             self.mem.write_float("emerald_increase_base", 0.0)
             self.mem.write_float("emerald_increase_cur", 0.0)
@@ -411,48 +791,62 @@ class TrainerApp(tk.Tk):
             self.mem.write_float("soul_gather_cur", mult)
 
     def set_springstone(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("springstone_cap_base", max(9999.0, val))
         self.mem.write_float("springstone_cap_cur", max(9999.0, val))
         self.mem.write_float("springstone_base", val)
         self.mem.write_float("springstone_current", val)
 
     def adjust_springstone(self, delta):
-        cur = self.mem.read_float("springstone_current") or 0.0
+        cur = self.mem.require_float("springstone_current")
         self.set_springstone(cur + delta)
 
     def set_ench_points(self, val):
-        val = float(val)
+        val = finite_float(val)
+        current_max = self.mem.require_float("ench_points_max_cur")
         self.mem.write_float("ench_points_cap_base", max(99.0, val))
         self.mem.write_float("ench_points_cap_cur", max(99.0, val))
+        if val > current_max:
+            self.mem.write_float("ench_points_max_base", val)
+            self.mem.write_float("ench_points_max_cur", val)
         self.mem.write_float("ench_points_base", val)
         self.mem.write_float("ench_points_cur", val)
 
+    def set_level(self, val):
+        val = finite_float(val)
+        if not val.is_integer() or not 1 <= val <= 100:
+            raise ValueError("Enter a whole level between 1 and 100.")
+        self.mem.write_float("level_base", val)
+        self.mem.write_float("level", val)
+
     def adjust_ench_points(self, delta):
-        cur = self.mem.read_float("ench_points_cur") or 0.0
+        cur = self.mem.require_float("ench_points_cur")
         self.set_ench_points(cur + delta)
 
     def set_souls(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("souls_cap_base", max(100.0, val))
         self.mem.write_float("souls_cap_cur", max(100.0, val))
         self.mem.write_float("souls_base", val)
         self.mem.write_float("souls_current", val)
 
     def adjust_souls(self, delta):
-        cur = self.mem.read_float("souls_current") or 0.0
+        cur = self.mem.require_float("souls_current")
         self.set_souls(cur + delta)
 
     def toggle_freeze_souls(self):
+        if not self.freeze_souls_active:
+            self.apply_freeze_souls()
         self.freeze_souls_active = not self.freeze_souls_active
         if self.freeze_souls_active:
-            self.btn_freeze_souls.config(text="SOULS: FROZEN (INFINITE)", bg="#a6e3a1", fg="#11111b")
-            self.apply_freeze_souls()
+            self.btn_freeze_souls.config(
+                text="SOULS: FROZEN (INFINITE)", bg="#70ddb1", fg="#081c18"
+            )
         else:
-            self.btn_freeze_souls.config(text="FREEZE SOULS (OFF)", bg="#313244", fg="#f38ba8")
+            self.btn_freeze_souls.config(text="FREEZE SOULS (OFF)", bg="#223146", fg="#f58a92")
 
     def apply_freeze_souls(self):
-        s_cap = self.mem.read_float("souls_cap_cur") or 100.0
+        s_cap = self.mem.require_float("souls_cap_cur")
         s_val = max(s_cap, 99999.0)
         self.mem.write_float("souls_cap_base", s_val)
         self.mem.write_float("souls_cap_cur", s_val)
@@ -460,8 +854,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("souls_current", s_val)
 
     def set_ammo(self, val):
-        val = float(val)
-        cur_max = self.mem.read_float("ammo_max_cur") or 15.0
+        val = finite_float(val)
+        cur_max = self.mem.require_float("ammo_max_cur")
         if val > cur_max:
             self.mem.write_float("ammo_max_base", val)
             self.mem.write_float("ammo_max_cur", val)
@@ -476,15 +870,18 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("ammo_current", 999.0)
 
     def toggle_auto_refill(self):
+        if not self.auto_refill_ammo_active:
+            self.apply_auto_refill()
         self.auto_refill_ammo_active = not self.auto_refill_ammo_active
         if self.auto_refill_ammo_active:
-            self.btn_auto_refill.config(text="AUTO-REFILL: ON (INFINITE)", bg="#a6e3a1", fg="#11111b")
-            self.apply_auto_refill()
+            self.btn_auto_refill.config(
+                text="AUTO-REFILL: ON (INFINITE)", bg="#70ddb1", fg="#081c18"
+            )
         else:
-            self.btn_auto_refill.config(text="AUTO-REFILL ARROWS (OFF)", bg="#313244", fg="#f38ba8")
+            self.btn_auto_refill.config(text="AUTO-REFILL ARROWS (OFF)", bg="#223146", fg="#f58a92")
 
     def apply_auto_refill(self):
-        m = self.mem.read_float("ammo_max_cur") or 999.0
+        m = self.mem.require_float("ammo_max_cur")
         m = max(m, 999.0)
         self.mem.write_float("ammo_max_base", m)
         self.mem.write_float("ammo_max_cur", m)
@@ -492,7 +889,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("ammo_current", m)
 
     def set_rapid_fire(self, spd):
-        spd = float(spd)
+        spd = finite_float(spd)
         self.mem.write_float("rapid_fire_base", spd)
         self.mem.write_float("rapid_fire_cur", spd)
 
@@ -503,64 +900,139 @@ class TrainerApp(tk.Tk):
         f = self.tab_combat
 
         # God Mode Toggle Button
-        god_frame = tk.Frame(f, bg="#1e1e2e", pady=6)
-        god_frame.grid(row=0, column=0, columnspan=5, sticky='w')
-        self.btn_god = tk.Button(god_frame, text="TOGGLE GOD MODE (OFF)", font=('Segoe UI', 10, 'bold'),
-                                 bg="#313244", fg="#f38ba8", padx=16, pady=6, relief='flat',
-                                 command=self.toggle_god_mode)
-        self.btn_god.pack(side='left')
+        god_frame = tk.Frame(f, bg="#131e2c", pady=6)
+        god_frame.grid(row=0, column=0, columnspan=5, sticky="w")
+        self.btn_god = tk.Button(
+            god_frame,
+            text="TOGGLE GOD MODE (OFF)",
+            font=("Segoe UI", 10, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=16,
+            pady=6,
+            relief="flat",
+            command=self.toggle_god_mode,
+        )
+        self.btn_god.pack(side="left")
 
-        god_hint = tk.Label(god_frame, text="Locks Health to Max, Damage Resistance to 0 (Immune), Invincible Byte ON",
-                            bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        god_hint.pack(side='left', padx=12)
+        god_hint = tk.Label(
+            god_frame,
+            text="Locks Health to Max, Damage Resistance to 0 (Immune), Invincible Byte ON",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        god_hint.pack(side="left", padx=12)
 
-        self.lbl_health = self.add_row(f, 1, "Health (Current / Max):", "health_current",
-                                       [("Full Heal", self.full_heal),
-                                        ("Set 10,000 HP", lambda: self.set_health(10000))],
-                                       custom_entry=True, setter=self.set_health)
+        self.lbl_health = self.add_row(
+            f,
+            1,
+            "Health (Current / Max):",
+            "health_current",
+            [("Full Heal", self.full_heal), ("Set 10,000 HP", lambda: self.set_health(10000))],
+            custom_entry=True,
+            setter=self.set_health,
+        )
 
-        self.lbl_shield = self.add_row(f, 2, "Shield:", "shield_current",
-                                       [("Set 1,000 Shield", lambda: self.mem.write_float("shield_current", 1000))],
-                                       custom_entry=True, setter=lambda v: self.mem.write_float("shield_current", v))
+        self.lbl_shield = self.add_row(
+            f,
+            2,
+            "Shield:",
+            "shield_current",
+            [("Set 1,000 Shield", lambda: self.mem.write_float("shield_current", 1000))],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("shield_current", v),
+        )
 
-        self.lbl_art_cd = self.add_row(f, 3, "Artifact Cooldown:", "artifact_cd",
-                                       [("Fast (0.05x)", self.set_instant_artifact),
-                                        ("Reset (1.0x)", self.reset_artifact_cd)])
+        self.lbl_art_cd = self.add_row(
+            f,
+            3,
+            "Artifact Cooldown:",
+            "artifact_cd",
+            [("Fast (0.05x)", self.set_instant_artifact), ("Reset (1.0x)", self.reset_artifact_cd)],
+        )
 
-        self.lbl_pot_cd = self.add_row(f, 4, "Potion Cooldown:", "potion_base_cd_cur",
-                                       [("Instant (0.1s)", self.set_instant_potion),
-                                        ("Reset (30s)", self.reset_potion)],
-                                       custom_entry=True, setter=self.set_potion_cd)
+        self.lbl_pot_cd = self.add_row(
+            f,
+            4,
+            "Potion Cooldown:",
+            "potion_base_cd_cur",
+            [("Instant (0.1s)", self.set_instant_potion), ("Reset (30s)", self.reset_potion)],
+            custom_entry=True,
+            setter=self.set_potion_cd,
+        )
 
         # Infinite Potions Toggle Row
-        pot_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
-        pot_frame.grid(row=5, column=0, columnspan=5, sticky='w')
-        self.btn_infinite_potions = tk.Button(pot_frame, text="INFINITE POTIONS (OFF)", font=('Segoe UI', 9, 'bold'),
-                                              bg="#313244", fg="#f38ba8", padx=12, pady=4, relief='flat',
-                                              command=self.toggle_infinite_potions)
-        self.btn_infinite_potions.pack(side='left')
-        lbl_pot_hint = tk.Label(pot_frame, text="Infinite Potions: Locks potion charges to 5 and auto-recharges instantly",
-                                bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        lbl_pot_hint.pack(side='left', padx=10)
+        pot_frame = tk.Frame(f, bg="#131e2c", pady=2)
+        pot_frame.grid(row=5, column=0, columnspan=5, sticky="w")
+        self.btn_infinite_potions = tk.Button(
+            pot_frame,
+            text="INFINITE POTIONS (OFF)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=12,
+            pady=4,
+            relief="flat",
+            command=self.toggle_infinite_potions,
+        )
+        self.btn_infinite_potions.pack(side="left")
+        lbl_pot_hint = tk.Label(
+            pot_frame,
+            text="Infinite Potions: Locks potion charges to 5 and auto-recharges instantly",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        lbl_pot_hint.pack(side="left", padx=10)
 
-        self.lbl_crit = self.add_row(f, 6, "Critical Hit Chance (1.0=100%):", "crit_chance",
-                                     [("100% Crit", lambda: self.mem.write_float("crit_chance", 1.0)),
-                                      ("500% Crit Dmg", lambda: self.mem.write_float("crit_multiplier", 5.0))],
-                                     custom_entry=True, setter=lambda v: self.mem.write_float("crit_chance", v))
+        self.lbl_crit = self.add_row(
+            f,
+            6,
+            "Critical Hit Chance (1.0=100%):",
+            "crit_chance",
+            [
+                ("100% Crit", lambda: self.mem.write_float("crit_chance", 1.0)),
+                ("500% Crit Dmg", lambda: self.mem.write_float("crit_multiplier", 5.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("crit_chance", v),
+        )
 
-        self.lbl_melee_spd = self.add_row(f, 7, "Melee Attack Speed:", "melee_speed",
-                                          [("2x Speed", lambda: self.mem.write_float("melee_speed", 2.0)),
-                                           ("5x Speed", lambda: self.mem.write_float("melee_speed", 5.0)),
-                                           ("Reset", lambda: self.mem.write_float("melee_speed", 1.0))],
-                                          custom_entry=True, setter=lambda v: self.mem.write_float("melee_speed", v))
+        self.lbl_melee_spd = self.add_row(
+            f,
+            7,
+            "Melee Attack Speed:",
+            "melee_speed",
+            [
+                ("2x Speed", lambda: self.mem.write_float("melee_speed", 2.0)),
+                ("5x Speed", lambda: self.mem.write_float("melee_speed", 5.0)),
+                ("Reset", lambda: self.mem.write_float("melee_speed", 1.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("melee_speed", v),
+        )
 
-        self.lbl_reach = self.add_row(f, 8, "Melee Reach / Range:", "melee_reach",
-                                      [("Super (2500)", lambda: self.mem.write_float("melee_reach", 2500.0)),
-                                       ("Reset (250)", lambda: self.mem.write_float("melee_reach", 250.0))],
-                                      custom_entry=True, setter=lambda v: self.mem.write_float("melee_reach", v))
+        self.lbl_reach = self.add_row(
+            f,
+            8,
+            "Melee Reach / Range:",
+            "melee_reach",
+            [
+                ("Super (2500)", lambda: self.mem.write_float("melee_reach", 2500.0)),
+                ("Reset (250)", lambda: self.mem.write_float("melee_reach", 250.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("melee_reach", v),
+        )
 
-        self.lbl_multi = self.add_row(f, 9, "MultiShot (Chance & Arrows):", "multishot_chance",
-                                      [("100% + 5 Arrows", self.enable_multishot)])
+        self.lbl_multi = self.add_row(
+            f,
+            9,
+            "MultiShot (Chance & Arrows):",
+            "multishot_chance",
+            [("100% + 5 Arrows", self.enable_multishot)],
+        )
 
     def set_instant_artifact(self):
         self.mem.write_float("artifact_cd_base", 0.05)
@@ -571,7 +1043,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("artifact_cd", 1.0)
 
     def set_potion_cd(self, val):
-        val = float(val)
+        val = finite_float(val)
         val = max(0.05, val)
         self.mem.write_float("potion_base_cd_base", val)
         self.mem.write_float("potion_base_cd_cur", val)
@@ -594,6 +1066,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 5.0)
 
     def reset_potion(self):
+        self.infinite_potions_active = False
+        self.btn_infinite_potions.config(text="INFINITE POTIONS (OFF)", bg="#223146", fg="#f58a92")
         self.mem.write_float("potion_base_cd_base", 30.0)
         self.mem.write_float("potion_base_cd_cur", 30.0)
         self.mem.write_float("potion_cd_base", 1.0)
@@ -604,13 +1078,18 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 1.0)
 
     def toggle_infinite_potions(self):
+        if not self.infinite_potions_active:
+            self.set_instant_potion()
         self.infinite_potions_active = not self.infinite_potions_active
         if self.infinite_potions_active:
-            self.btn_infinite_potions.config(text="INFINITE POTIONS: ON", bg="#a6e3a1", fg="#11111b")
-            self.set_instant_potion()
-            self.apply_infinite_potions()
+            self.btn_infinite_potions.config(
+                text="INFINITE POTIONS: ON", bg="#70ddb1", fg="#081c18"
+            )
         else:
-            self.btn_infinite_potions.config(text="INFINITE POTIONS (OFF)", bg="#313244", fg="#f38ba8")
+            self.btn_infinite_potions.config(
+                text="INFINITE POTIONS (OFF)", bg="#223146", fg="#f58a92"
+            )
+            self.reset_potion()
 
     def apply_infinite_potions(self):
         self.mem.write_float("potion_max_charges_base", 5.0)
@@ -619,24 +1098,54 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 5.0)
 
     def toggle_god_mode(self):
-        self.god_mode_active = not self.god_mode_active
-        if self.god_mode_active:
-            self.btn_god.config(text="GOD MODE: ACTIVE (IMMUNE)", bg="#a6e3a1", fg="#11111b")
+        if not self.god_mode_active:
             self.apply_god_mode()
         else:
-            self.btn_god.config(text="TOGGLE GOD MODE (OFF)", bg="#313244", fg="#f38ba8")
-            self.mem.write_float("damage_resist", 1.0)
-            self.mem.write_byte("actor_invincible", 116)
+            if self._god_original and self._god_original_pid == self.mem.pid:
+                resist_addr, resistance, flag_addr, flag = self._god_original
+                if self.mem.resolve_chain(CHAINS["damage_resist"]) == resist_addr:
+                    self.mem.write_float("damage_resist", resistance)
+                if self.mem.resolve_chain(CHAINS["actor_invincible"]) == flag_addr:
+                    current = self.mem.read_byte("actor_invincible")
+                    if current is None:
+                        raise MemoryAccessError("Cannot read actor flags.")
+                    self.mem.write_byte("actor_invincible", (current & ~0x04) | (flag & 0x04))
+            self._god_original = None
+        self.god_mode_active = not self.god_mode_active
+        if self.god_mode_active:
+            self.btn_god.config(text="GOD MODE: ACTIVE (IMMUNE)", bg="#70ddb1", fg="#081c18")
+        else:
+            self.btn_god.config(text="TOGGLE GOD MODE (OFF)", bg="#223146", fg="#f58a92")
 
     def apply_god_mode(self):
-        h_max = self.mem.read_float("health_max") or 100.0
+        resistance_addr = self.mem.resolve_chain(CHAINS["damage_resist"])
+        flag_addr = self.mem.resolve_chain(CHAINS["actor_invincible"])
+        flag = self.mem.read_byte("actor_invincible")
+        if not resistance_addr or not flag_addr or flag is None:
+            raise MemoryAccessError("Cannot read God Mode attributes.")
+        if (
+            self._god_original is None
+            or self._god_original_pid != self.mem.pid
+            or self._god_original[0] != resistance_addr
+            or self._god_original[2] != flag_addr
+        ):
+            self._god_original = (
+                resistance_addr,
+                self.mem.require_float("damage_resist"),
+                flag_addr,
+                flag,
+            )
+            self._god_original_pid = self.mem.pid
+        h_max = self.mem.require_float("health_max")
+        shield_max = self.mem.require_float("shield_max")
         self.mem.write_float("health_current", h_max)
-        self.mem.write_float("shield_current", 100.0)
+        self.mem.write_float("shield_current", shield_max)
         self.mem.write_float("damage_resist", 0.0)
-        self.mem.write_byte("actor_invincible", 112)
+        # Preserve unrelated actor flags; the previous 116 -> 112 change clears bit 2.
+        self.mem.write_byte("actor_invincible", flag & ~0x04)
 
     def full_heal(self):
-        h_max = self.mem.read_float("health_max") or 100.0
+        h_max = self.mem.require_float("health_max")
         self.mem.write_float("health_current", h_max)
 
     def set_health(self, val):
@@ -654,64 +1163,127 @@ class TrainerApp(tk.Tk):
         f = self.tab_movement
 
         # Movement Speed Multiplier (Writes both Base and Cur + Lock option)
-        self.lbl_move_mult = self.add_row(f, 0, "Speed Multiplier (GAS):", "move_mult_cur",
-                                          [("1.5x", lambda: self.set_speed(1.5)),
-                                           ("2.0x", lambda: self.set_speed(2.0)),
-                                           ("3.0x", lambda: self.set_speed(3.0)),
-                                           ("Reset (1.0)", lambda: self.set_speed(1.0))],
-                                          custom_entry=True, setter=self.set_speed)
+        self.lbl_move_mult = self.add_row(
+            f,
+            0,
+            "Speed Multiplier (GAS):",
+            "move_mult_cur",
+            [
+                ("1.5x", lambda: self.set_speed(1.5)),
+                ("2.0x", lambda: self.set_speed(2.0)),
+                ("3.0x", lambda: self.set_speed(3.0)),
+                ("Reset (1.0)", lambda: self.set_speed(1.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_speed,
+        )
 
         # Lock Speed Multiplier Toggle Row (prevents combat reset)
-        speed_lock_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
-        speed_lock_frame.grid(row=1, column=0, columnspan=5, sticky='w')
-        self.btn_lock_speed = tk.Button(speed_lock_frame, text="LOCK SPEED (OFF)", font=('Segoe UI', 9, 'bold'),
-                                        bg="#313244", fg="#f38ba8", padx=12, pady=4, relief='flat',
-                                        command=self.toggle_lock_speed)
-        self.btn_lock_speed.pack(side='left')
-        lbl_speed_hint = tk.Label(speed_lock_frame, text="Locks speed multiplier so attacks / montages cannot reset speed to 1.0",
-                                  bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        lbl_speed_hint.pack(side='left', padx=10)
+        speed_lock_frame = tk.Frame(f, bg="#131e2c", pady=2)
+        speed_lock_frame.grid(row=1, column=0, columnspan=5, sticky="w")
+        self.btn_lock_speed = tk.Button(
+            speed_lock_frame,
+            text="LOCK SPEED (OFF)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=12,
+            pady=4,
+            relief="flat",
+            command=self.toggle_lock_speed,
+        )
+        self.btn_lock_speed.pack(side="left")
+        lbl_speed_hint = tk.Label(
+            speed_lock_frame,
+            text="Locks speed multiplier so attacks / montages cannot reset speed to 1.0",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        lbl_speed_hint.pack(side="left", padx=10)
 
         # Jump Height (Jump Z Velocity)
-        self.lbl_jump = self.add_row(f, 2, "Jump Height (Default: 1440):", "jump_velocity",
-                                     [("High (2200)", lambda: self.mem.write_float("jump_velocity", 2200.0)),
-                                      ("Super (3000)", lambda: self.mem.write_float("jump_velocity", 3000.0)),
-                                      ("Reset (1440)", lambda: self.mem.write_float("jump_velocity", 1440.0))],
-                                     custom_entry=True, setter=lambda v: self.mem.write_float("jump_velocity", v))
+        self.lbl_jump = self.add_row(
+            f,
+            2,
+            "Jump Height (Default: 1440):",
+            "jump_velocity",
+            [
+                ("High (2200)", lambda: self.mem.write_float("jump_velocity", 2200.0)),
+                ("Super (3000)", lambda: self.mem.write_float("jump_velocity", 3000.0)),
+                ("Reset (1440)", lambda: self.mem.write_float("jump_velocity", 1440.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("jump_velocity", v),
+        )
 
         # Gravity Scale
-        self.lbl_grav = self.add_row(f, 3, "Gravity Scale (Default: 1.2):", "gravity",
-                                     [("Moon (0.4)", lambda: self.mem.write_float("gravity", 0.4)),
-                                      ("Low (0.7)", lambda: self.mem.write_float("gravity", 0.7)),
-                                      ("Reset (1.2)", lambda: self.mem.write_float("gravity", 1.2))],
-                                     custom_entry=True, setter=lambda v: self.mem.write_float("gravity", v))
+        self.lbl_grav = self.add_row(
+            f,
+            3,
+            "Gravity Scale (Default: 1.2):",
+            "gravity",
+            [
+                ("Moon (0.4)", lambda: self.mem.write_float("gravity", 0.4)),
+                ("Low (0.7)", lambda: self.mem.write_float("gravity", 0.7)),
+                ("Reset (1.2)", lambda: self.mem.write_float("gravity", 1.2)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("gravity", v),
+        )
 
         # Roll Cooldown
-        self.lbl_roll = self.add_row(f, 4, "Roll Cooldown:", "roll_cd",
-                                     [("Instant Roll (0.1s)", self.set_instant_roll),
-                                      ("Reset (2.5s)", self.reset_roll)],
-                                     custom_entry=True, setter=self.set_roll_cd)
+        self.lbl_roll = self.add_row(
+            f,
+            4,
+            "Roll Cooldown:",
+            "roll_cd",
+            [("Instant Roll (0.1s)", self.set_instant_roll), ("Reset (2.5s)", self.reset_roll)],
+            custom_entry=True,
+            setter=self.set_roll_cd,
+        )
 
         # Infinite Roll Toggle Row
-        roll_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
-        roll_frame.grid(row=5, column=0, columnspan=5, sticky='w')
-        self.btn_infinite_roll = tk.Button(roll_frame, text="INFINITE ROLL (OFF)", font=('Segoe UI', 9, 'bold'),
-                                           bg="#313244", fg="#f38ba8", padx=12, pady=4, relief='flat',
-                                           command=self.toggle_infinite_roll)
-        self.btn_infinite_roll.pack(side='left')
-        lbl_roll_hint = tk.Label(roll_frame, text="Infinite Roll: Continually keeps roll charges at 5 for nonstop tumbling",
-                                 bg="#1e1e2e", fg="#a6adc8", font=('Segoe UI', 8))
-        lbl_roll_hint.pack(side='left', padx=10)
+        roll_frame = tk.Frame(f, bg="#131e2c", pady=2)
+        roll_frame.grid(row=5, column=0, columnspan=5, sticky="w")
+        self.btn_infinite_roll = tk.Button(
+            roll_frame,
+            text="INFINITE ROLL (OFF)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#223146",
+            fg="#f58a92",
+            padx=12,
+            pady=4,
+            relief="flat",
+            command=self.toggle_infinite_roll,
+        )
+        self.btn_infinite_roll.pack(side="left")
+        lbl_roll_hint = tk.Label(
+            roll_frame,
+            text="Infinite Roll: Continually keeps roll charges at 5 for nonstop tumbling",
+            bg="#131e2c",
+            fg="#8fa2b8",
+            font=("Segoe UI", 8),
+        )
+        lbl_roll_hint.pack(side="left", padx=10)
 
         # Time Dilation (Player Speedhack)
-        self.lbl_time = self.add_row(f, 6, "Time Dilation (Game Speed):", "time_dilation",
-                                     [("1.25x", lambda: self.mem.write_float("time_dilation", 1.25)),
-                                      ("1.5x", lambda: self.mem.write_float("time_dilation", 1.5)),
-                                      ("Reset (1.0)", lambda: self.mem.write_float("time_dilation", 1.0))],
-                                     custom_entry=True, setter=lambda v: self.mem.write_float("time_dilation", v))
+        self.lbl_time = self.add_row(
+            f,
+            6,
+            "Time Dilation (Game Speed):",
+            "time_dilation",
+            [
+                ("1.25x", lambda: self.mem.write_float("time_dilation", 1.25)),
+                ("1.5x", lambda: self.mem.write_float("time_dilation", 1.5)),
+                ("Reset (1.0)", lambda: self.mem.write_float("time_dilation", 1.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("time_dilation", v),
+        )
 
     def set_roll_cd(self, val):
-        val = float(val)
+        val = finite_float(val)
         val = max(0.05, val)
         self.mem.write_float("roll_cd_base", val)
         self.mem.write_float("roll_cd", val)
@@ -730,6 +1302,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 5.0)
 
     def reset_roll(self):
+        self.infinite_roll_active = False
+        self.btn_infinite_roll.config(text="INFINITE ROLL (OFF)", bg="#223146", fg="#f58a92")
         self.mem.write_float("roll_cd_base", 2.5)
         self.mem.write_float("roll_cd", 2.5)
         self.mem.write_float("roll_max_charges_base", 1.0)
@@ -738,13 +1312,14 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 1.0)
 
     def toggle_infinite_roll(self):
+        if not self.infinite_roll_active:
+            self.set_instant_roll()
         self.infinite_roll_active = not self.infinite_roll_active
         if self.infinite_roll_active:
-            self.btn_infinite_roll.config(text="INFINITE ROLL: ON", bg="#a6e3a1", fg="#11111b")
-            self.set_instant_roll()
-            self.apply_infinite_roll()
+            self.btn_infinite_roll.config(text="INFINITE ROLL: ON", bg="#70ddb1", fg="#081c18")
         else:
-            self.btn_infinite_roll.config(text="INFINITE ROLL (OFF)", bg="#313244", fg="#f38ba8")
+            self.btn_infinite_roll.config(text="INFINITE ROLL (OFF)", bg="#223146", fg="#f58a92")
+            self.reset_roll()
 
     def apply_infinite_roll(self):
         self.mem.write_float("roll_max_charges_base", 5.0)
@@ -753,21 +1328,24 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 5.0)
 
     def set_speed(self, val):
-        val = float(val)
-        self.locked_speed_val = val
+        val = finite_float(val)
         self.mem.write_float("move_mult_base", val)
         self.mem.write_float("move_mult_cur", val)
+        self.locked_speed_val = val
+        if self.lock_speed_active:
+            self.btn_lock_speed.config(text=f"SPEED LOCKED ({val:.1f}x)")
 
     def toggle_lock_speed(self):
+        if not self.lock_speed_active:
+            self.locked_speed_val = self.mem.require_float("move_mult_cur")
+            self.apply_lock_speed()
         self.lock_speed_active = not self.lock_speed_active
         if self.lock_speed_active:
-            cur = self.mem.read_float("move_mult_cur") or 1.0
-            if cur > 1.0:
-                self.locked_speed_val = cur
-            self.btn_lock_speed.config(text=f"SPEED LOCKED ({self.locked_speed_val:.1f}x)", bg="#a6e3a1", fg="#11111b")
-            self.apply_lock_speed()
+            self.btn_lock_speed.config(
+                text=f"SPEED LOCKED ({self.locked_speed_val:.1f}x)", bg="#70ddb1", fg="#081c18"
+            )
         else:
-            self.btn_lock_speed.config(text="LOCK SPEED (OFF)", bg="#313244", fg="#f38ba8")
+            self.btn_lock_speed.config(text="LOCK SPEED (OFF)", bg="#223146", fg="#f58a92")
 
     def apply_lock_speed(self):
         self.mem.write_float("move_mult_base", self.locked_speed_val)
@@ -780,63 +1358,124 @@ class TrainerApp(tk.Tk):
         f = self.tab_progression
 
         # Master Loot Multiplier (Synchronizes Drops + Duplication + Engine Payouts Cap)
-        self.lbl_master_loot = self.add_row(f, 0, "Master Loot Multiplier:", "loot_multiplier",
-                                            [("2x Loot", lambda: self.set_master_loot(2.0)),
-                                             ("3x Loot", lambda: self.set_master_loot(3.0)),
-                                             ("5x Loot", lambda: self.set_master_loot(5.0)),
-                                             ("10x Loot", lambda: self.set_master_loot(10.0)),
-                                             ("Reset (1x)", lambda: self.set_master_loot(1.0))],
-                                            custom_entry=True, setter=self.set_master_loot)
+        self.lbl_master_loot = self.add_row(
+            f,
+            0,
+            "Master Loot Multiplier:",
+            "loot_multiplier",
+            [
+                ("2x Loot", lambda: self.set_master_loot(2.0)),
+                ("3x Loot", lambda: self.set_master_loot(3.0)),
+                ("5x Loot", lambda: self.set_master_loot(5.0)),
+                ("10x Loot", lambda: self.set_master_loot(10.0)),
+                ("Reset (1x)", lambda: self.set_master_loot(1.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_master_loot,
+        )
 
         # Drop Duplication Chance
-        self.lbl_dup = self.add_row(f, 1, "Drop Duplication Chance:", "drop_duplication",
-                                    [("2x (100%)", lambda: self.set_drop_duplication(1.0)),
-                                     ("3x (200%)", lambda: self.set_drop_duplication(2.0)),
-                                     ("5x (400%)", lambda: self.set_drop_duplication(4.0)),
-                                     ("10x (900%)", lambda: self.set_drop_duplication(9.0)),
-                                     ("Reset (0%)", lambda: self.set_drop_duplication(0.0))],
-                                    custom_entry=True, setter=self.set_drop_duplication)
+        self.lbl_dup = self.add_row(
+            f,
+            1,
+            "Drop Duplication Chance:",
+            "drop_duplication",
+            [
+                ("2x (100%)", lambda: self.set_drop_duplication(1.0)),
+                ("3x (200%)", lambda: self.set_drop_duplication(2.0)),
+                ("5x (400%)", lambda: self.set_drop_duplication(4.0)),
+                ("10x (900%)", lambda: self.set_drop_duplication(9.0)),
+                ("Reset (0%)", lambda: self.set_drop_duplication(0.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_drop_duplication,
+        )
 
         # Max Loot Payouts Cap (Internal Engine Drop Iteration Limit)
-        self.lbl_max_payouts = self.add_row(f, 2, "Max Loot Payouts Cap:", "max_payouts_cur",
-                                            [("Default (1)", lambda: self.set_max_payouts(1.0)),
-                                             ("5 Payouts", lambda: self.set_max_payouts(5.0)),
-                                             ("10 Payouts", lambda: self.set_max_payouts(10.0)),
-                                             ("50 Payouts", lambda: self.set_max_payouts(50.0))],
-                                            custom_entry=True, setter=self.set_max_payouts)
+        self.lbl_max_payouts = self.add_row(
+            f,
+            2,
+            "Max Loot Payouts Cap:",
+            "max_payouts_cur",
+            [
+                ("Default (1)", lambda: self.set_max_payouts(1.0)),
+                ("5 Payouts", lambda: self.set_max_payouts(5.0)),
+                ("10 Payouts", lambda: self.set_max_payouts(10.0)),
+                ("50 Payouts", lambda: self.set_max_payouts(50.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_max_payouts,
+        )
 
         # Looting Drop Multiplier
-        self.lbl_loot = self.add_row(f, 3, "Looting Drop Multiplier:", "loot_multiplier",
-                                     [("5x Drops", lambda: self.set_looting_multiplier(5.0)),
-                                      ("10x Drops", lambda: self.set_looting_multiplier(10.0)),
-                                      ("25x Drops", lambda: self.set_looting_multiplier(25.0)),
-                                      ("Reset (0)", lambda: self.set_looting_multiplier(0.0))],
-                                     custom_entry=True, setter=self.set_looting_multiplier)
+        self.lbl_loot = self.add_row(
+            f,
+            3,
+            "Looting Drop Multiplier:",
+            "loot_multiplier",
+            [
+                ("5x Drops", lambda: self.set_looting_multiplier(5.0)),
+                ("10x Drops", lambda: self.set_looting_multiplier(10.0)),
+                ("25x Drops", lambda: self.set_looting_multiplier(25.0)),
+                ("Reset (0)", lambda: self.set_looting_multiplier(0.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_looting_multiplier,
+        )
 
         # Rarity Bonus Chance
-        self.lbl_rarity = self.add_row(f, 4, "Rarity Bonus Chance:", "rarity_bonus",
-                                       [("100% Unique/Rare", lambda: self.set_rarity_bonus(1.0)),
-                                        ("Reset (0)", lambda: self.set_rarity_bonus(0.0))],
-                                       custom_entry=True, setter=self.set_rarity_bonus)
+        self.lbl_rarity = self.add_row(
+            f,
+            4,
+            "Rarity Bonus Chance:",
+            "rarity_bonus",
+            [
+                ("100% Unique/Rare", lambda: self.set_rarity_bonus(1.0)),
+                ("Reset (0)", lambda: self.set_rarity_bonus(0.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_rarity_bonus,
+        )
 
         # Character Level
-        self.lbl_level = self.add_row(f, 5, "Character Level:", "level",
-                                      [("Level 50", lambda: self.mem.write_float("level", 50.0)),
-                                       ("Level 100", lambda: self.mem.write_float("level", 100.0))],
-                                      custom_entry=True, setter=lambda v: self.mem.write_float("level", v))
+        self.lbl_level = self.add_row(
+            f,
+            5,
+            "Character Level:",
+            "level",
+            [
+                ("Level 50", lambda: self.set_level(50.0)),
+                ("Level 100", lambda: self.set_level(100.0)),
+            ],
+            custom_entry=True,
+            setter=self.set_level,
+        )
 
         # Current XP
-        self.lbl_xp = self.add_row(f, 6, "Current XP:", "xp_current",
-                                   [("+10,000 XP", lambda: self.adjust_xp(10000.0)),
-                                    ("+50,000 XP", lambda: self.adjust_xp(50000.0))],
-                                   custom_entry=True, setter=lambda v: self.mem.write_float("xp_current", v))
+        self.lbl_xp = self.add_row(
+            f,
+            6,
+            "Current XP:",
+            "xp_current",
+            [
+                ("+10,000 XP", lambda: self.adjust_xp(10000.0)),
+                ("+50,000 XP", lambda: self.adjust_xp(50000.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("xp_current", v),
+        )
 
         # Vendors
-        self.lbl_vendor = self.add_row(f, 7, "Vendor Upgrades & Restock:", "merchant_charges",
-                                       [("Max All Vendors", self.max_all_vendors)])
+        self.lbl_vendor = self.add_row(
+            f,
+            7,
+            "Vendor Upgrades & Restock:",
+            "merchant_charges",
+            [("Max All Vendors", self.max_all_vendors)],
+        )
 
     def set_master_loot(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         if mult <= 1.0:
             self.mem.write_float("drop_dup_base", 0.0)
             self.mem.write_float("drop_duplication", 0.0)
@@ -859,33 +1498,33 @@ class TrainerApp(tk.Tk):
             self.mem.write_float("drop_chance", mult)
 
     def set_drop_duplication(self, val):
-        val = float(val)
+        val = finite_float(val)
+        cur_payouts = self.mem.require_float("max_payouts_cur")
         self.mem.write_float("drop_dup_base", val)
         self.mem.write_float("drop_duplication", val)
         # Ensure engine MaximumLootingPayouts is at least val + 1 so duplication isn't capped
-        cur_payouts = self.mem.read_float("max_payouts_cur") or 1.0
         needed = max(1.0, val + 1.0)
         if cur_payouts < needed:
             self.mem.write_float("max_payouts_base", needed)
             self.mem.write_float("max_payouts_cur", needed)
 
     def set_max_payouts(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("max_payouts_base", val)
         self.mem.write_float("max_payouts_cur", val)
 
     def set_looting_multiplier(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("loot_mult_base", val)
         self.mem.write_float("loot_multiplier", val)
 
     def set_rarity_bonus(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("rarity_bonus_base", val)
         self.mem.write_float("rarity_bonus", val)
 
     def adjust_xp(self, delta):
-        cur = self.mem.read_float("xp_current") or 0.0
+        cur = self.mem.require_float("xp_current")
         self.mem.write_float("xp_current", cur + delta)
 
     def max_all_vendors(self):
@@ -900,118 +1539,255 @@ class TrainerApp(tk.Tk):
     def build_developer_tab(self):
         f = self.tab_developer
 
-        self.lbl_debug = self.add_row(f, 0, "EnableDebug Flag (PC+0x94D):", "debug_flag",
-                                      [("Enable (1)", lambda: self.mem.write_byte("debug_flag", 1)),
-                                       ("Disable (0)", lambda: self.mem.write_byte("debug_flag", 0))], is_byte=True)
+        self.lbl_debug = self.add_row(
+            f,
+            0,
+            "EnableDebug Flag (PC+0x94D):",
+            "debug_flag",
+            [
+                ("Enable (1)", lambda: self.mem.write_byte("debug_flag", 1)),
+                ("Disable (0)", lambda: self.mem.write_byte("debug_flag", 0)),
+            ],
+            is_byte=True,
+        )
 
-        self.lbl_debug_ui = self.add_row(f, 1, "DebugUIControls (PC+0x748):", "debug_ui",
-                                         [("Enable (1)", lambda: self.mem.write_byte("debug_ui", 1)),
-                                          ("Disable (0)", lambda: self.mem.write_byte("debug_ui", 0))], is_byte=True)
+        self.lbl_debug_ui = self.add_row(
+            f,
+            1,
+            "DebugUIControls (PC+0x748):",
+            "debug_ui",
+            [
+                ("Enable (1)", lambda: self.mem.write_byte("debug_ui", 1)),
+                ("Disable (0)", lambda: self.mem.write_byte("debug_ui", 0)),
+            ],
+            is_byte=True,
+        )
 
-        self.lbl_fov = self.add_row(f, 2, "Camera FOV (Default: 90):", "camera_fov",
-                                    [("FOV 100", lambda: self.mem.write_float("camera_fov", 100.0)),
-                                     ("FOV 110", lambda: self.mem.write_float("camera_fov", 110.0)),
-                                     ("FOV 120", lambda: self.mem.write_float("camera_fov", 120.0)),
-                                     ("Reset (90)", lambda: self.mem.write_float("camera_fov", 90.0))],
-                                    custom_entry=True, setter=lambda v: self.mem.write_float("camera_fov", v))
+        self.lbl_fov = self.add_row(
+            f,
+            2,
+            "Camera FOV (Default: 90):",
+            "camera_fov",
+            [
+                ("FOV 100", lambda: self.mem.write_float("camera_fov", 100.0)),
+                ("FOV 110", lambda: self.mem.write_float("camera_fov", 110.0)),
+                ("FOV 120", lambda: self.mem.write_float("camera_fov", 120.0)),
+                ("Reset (90)", lambda: self.mem.write_float("camera_fov", 90.0)),
+            ],
+            custom_entry=True,
+            setter=lambda v: self.mem.write_float("camera_fov", v),
+        )
 
     # ==========================================
     # GUI Helpers
     # ==========================================
-    def add_row(self, parent, row_idx, label_text, key, buttons, custom_entry=False, is_byte=False, setter=None):
-        lbl_title = tk.Label(parent, text=label_text, bg="#1e1e2e", fg="#cdd6f4", font=('Segoe UI', 9, 'bold'))
-        lbl_title.grid(row=row_idx, column=0, sticky='w', pady=6, padx=(0, 10))
-
-        lbl_val = tk.Label(parent, text="---", bg="#1e1e2e", fg="#f9e2af", font=('Consolas', 10, 'bold'), width=11, anchor='w')
-        lbl_val.grid(row=row_idx, column=1, sticky='w', pady=6, padx=(0, 8))
-
-        btn_frame = tk.Frame(parent, bg="#1e1e2e")
-        btn_frame.grid(row=row_idx, column=2, sticky='w', pady=6)
-
+    def add_row(
+        self,
+        parent,
+        row_idx,
+        label_text,
+        key,
+        buttons,
+        custom_entry=False,
+        is_byte=False,
+        setter=None,
+    ):
+        short_titles = {
+            "emeralds_current": "Emeralds",
+            "springstone_current": "Echo Shards",
+            "ench_points_cur": "Enchantment points",
+            "emerald_increase_cur": "Currency gain multiplier (Emeralds & Souls)",
+            "souls_current": "Soul energy",
+            "ammo_current": "Arrow supply",
+            "rapid_fire_cur": "Bow attack speed",
+            "health_current": "Health",
+            "shield_current": "Shield",
+            "artifact_cd": "Artifact cooldown",
+            "potion_base_cd_cur": "Potion cooldown",
+            "crit_chance": "Critical hit chance",
+            "melee_speed": "Melee attack speed",
+            "melee_reach": "Melee reach",
+            "multishot_chance": "Multishot",
+            "move_mult_cur": "Movement speed",
+            "jump_velocity": "Jump height",
+            "gravity": "Gravity",
+            "roll_cd": "Roll cooldown",
+            "time_dilation": "Player time scale",
+            "level": "Character level",
+            "xp_current": "Experience",
+            "camera_fov": "Field of view",
+        }
+        card = tk.Frame(
+            parent,
+            bg="#131e2c",
+            padx=16,
+            pady=14,
+            highlightthickness=1,
+            highlightbackground="#223146",
+        )
+        card.is_option_card = True
+        card.grid(row=row_idx, column=0, columnspan=5, sticky="ew", pady=(0, 12))
+        card.columnconfigure(0, weight=1)
+        tk.Label(
+            card,
+            text=short_titles.get(key, label_text.rstrip(":")),
+            bg="#131e2c",
+            fg="#e6eef8",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        lbl_val = tk.Label(
+            card,
+            text="\u2014",
+            bg="#131e2c",
+            fg="#64d8cb",
+            font=("Segoe UI", 13, "bold"),
+            anchor="e",
+        )
+        lbl_val.grid(row=0, column=1, sticky="e")
+        controls = FlowFrame(card, bg="#131e2c")
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         if custom_entry:
+            input_group = tk.Frame(controls, bg="#131e2c")
+            tk.Label(
+                input_group, text="Custom", bg="#131e2c", fg="#8fa2b8", font=("Segoe UI", 9)
+            ).pack(side="left", padx=(0, 8))
             entry_var = tk.StringVar()
-            entry = tk.Entry(btn_frame, textvariable=entry_var, width=7, bg="#313244", fg="#cdd6f4",
-                             insertbackground="#cdd6f4", relief='flat', font=('Consolas', 9))
-            entry.pack(side='left', padx=(0, 4))
+            entry = tk.Entry(
+                input_group,
+                textvariable=entry_var,
+                width=9,
+                bg="#0b111b",
+                fg="#e6eef8",
+                insertbackground="#e6eef8",
+                relief="flat",
+                font=("Segoe UI", 11),
+                highlightthickness=1,
+                highlightbackground="#344b64",
+                highlightcolor="#64d8cb",
+            )
+            entry.pack(side="left", padx=(0, 8), ipady=6)
 
             def on_set():
                 val = entry_var.get().strip()
                 if val:
                     try:
-                        num = float(val) if not is_byte else int(val)
+                        num = finite_float(val) if not is_byte else int(val)
                         if setter:
                             setter(num)
                         elif is_byte:
                             self.mem.write_byte(key, num)
                         else:
                             self.mem.write_float(key, num)
-                    except ValueError:
-                        pass
+                    except (ValueError, OverflowError) as exc:
+                        messagebox.showerror("Invalid value", str(exc), parent=self)
 
-            btn_set = ttk.Button(btn_frame, text="Set", command=on_set, width=4)
-            btn_set.pack(side='left', padx=(0, 8))
-
+            entry.bind("<Return>", lambda event: on_set())
+            ttk.Button(input_group, text="Apply", command=on_set, style="Accent.TButton").pack(
+                side="left"
+            )
+            controls.add(input_group)
         for text, cmd in buttons:
-            b = ttk.Button(btn_frame, text=text, command=cmd)
-            b.pack(side='left', padx=3)
-
-        return (lbl_val, key, is_byte)
+            controls.add(ttk.Button(controls, text=text, command=cmd))
+        row = (lbl_val, key, is_byte)
+        self.value_rows.append(row)
+        return row
 
     def refresh_loop(self):
-        if not self.mem.h_proc:
-            self.try_connect()
+        try:
+            self.refresh_values()
+        except (MemoryAccessError, ValueError, OverflowError) as exc:
+            self.set_session_view("unknown")
+            self.status_lbl.config(text=str(exc), fg="#f58a92")
+            self.clear_values()
+        finally:
+            self._refresh_job = self.after(250, self.refresh_loop)
+
+    def refresh_values(self):
+        if not self.mem.is_alive():
+            self.set_session_view("disconnected")
+            self.clear_values()
+            if time.monotonic() >= self.next_connect_at:
+                self.try_connect()
+            if not self.mem.h_proc:
+                self.status_lbl.config(text=self.mem.last_error, fg="#f58a92")
+                return
 
         if self.mem.h_proc:
-            # God Mode continuous lock
-            if self.god_mode_active:
-                self.apply_god_mode()
+            kind = self.mem.session_kind()
+            identity = (self.mem.pid, self.mem.resolve_chain(CHAINS["player_role"]))
+            self.set_session_view(kind, identity)
+            if kind == "loading":
+                self.status_lbl.config(
+                    text="Character unavailable: load a character or check game compatibility.",
+                    fg="#edc58c",
+                )
+                self.clear_values()
+                return
+            session_error = self.mem.session_write_error()
+            errors = []
+            for active, apply in (
+                (self.god_mode_active, self.apply_god_mode),
+                (self.freeze_souls_active, self.apply_freeze_souls),
+                (self.auto_refill_ammo_active, self.apply_auto_refill),
+                (self.lock_speed_active, self.apply_lock_speed),
+                (self.infinite_potions_active, self.apply_infinite_potions),
+                (self.infinite_roll_active, self.apply_infinite_roll),
+            ):
+                if active and kind in ("local", "client") and not session_error:
+                    try:
+                        apply()
+                    except (MemoryAccessError, ValueError, OverflowError) as exc:
+                        errors.append(str(exc))
 
-            # Freeze Souls continuous lock
-            if self.freeze_souls_active:
-                self.apply_freeze_souls()
-
-            # Auto-Refill Ammo continuous lock
-            if self.auto_refill_ammo_active:
-                self.apply_auto_refill()
-
-            # Lock Speed Multiplier continuous lock (prevents attack montage reset)
-            if self.lock_speed_active:
-                self.apply_lock_speed()
-
-            # Infinite Potions continuous lock
-            if self.infinite_potions_active:
-                self.apply_infinite_potions()
-
-            # Infinite Roll continuous lock
-            if self.infinite_roll_active:
-                self.apply_infinite_roll()
-
-            for tab_rows in [
-                [self.lbl_emeralds, self.lbl_springstone, self.lbl_ench, self.lbl_curr_mult, self.lbl_souls, self.lbl_ammo, self.lbl_rapid],
-                [self.lbl_health, self.lbl_shield, self.lbl_art_cd, self.lbl_pot_cd, self.lbl_crit, self.lbl_melee_spd, self.lbl_reach, self.lbl_multi],
-                [self.lbl_move_mult, self.lbl_jump, self.lbl_grav, self.lbl_roll, self.lbl_time],
-                [self.lbl_master_loot, self.lbl_dup, self.lbl_max_payouts, self.lbl_loot, self.lbl_rarity, self.lbl_level, self.lbl_xp, self.lbl_vendor],
-                [self.lbl_debug, self.lbl_debug_ui, self.lbl_fov]
-            ]:
-                for row_data in tab_rows:
-                    lbl, key, is_byte = row_data
-                    if is_byte:
-                        v = self.mem.read_byte(key)
-                        lbl.config(text=str(v) if v is not None else "---")
-                    else:
-                        v = self.mem.read_float(key)
-                        if v is not None:
-                            if key == "emerald_increase_cur":
-                                mult_disp = v + 1.0
-                                lbl.config(text=f"{mult_disp:.1f}x")
-                            elif abs(v) >= 10:
-                                lbl.config(text=f"{v:,.1f}")
-                            else:
-                                lbl.config(text=f"{v:.2f}")
+            unavailable = 0
+            for lbl, key, is_byte in self.value_rows:
+                if is_byte:
+                    v = self.mem.read_byte(key)
+                    lbl.config(text=str(v) if v is not None else "---")
+                else:
+                    v = self.mem.read_float(key)
+                    if v is not None:
+                        if key == "emerald_increase_cur":
+                            mult_disp = v + 1.0
+                            lbl.config(text=f"{mult_disp:.1f}x")
+                        elif key in (
+                            "emeralds_current",
+                            "springstone_current",
+                            "ench_points_cur",
+                            "level",
+                            "ammo_current",
+                            "health_current",
+                        ):
+                            lbl.config(text=f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}")
+                        elif abs(v) >= 10:
+                            lbl.config(text=f"{v:,.1f}")
                         else:
-                            lbl.config(text="---")
+                            lbl.config(text=f"{v:.2f}")
+                    else:
+                        lbl.config(text="---")
+                if v is None:
+                    unavailable += 1
+            if errors:
+                self.status_lbl.config(text=errors[0], fg="#f58a92")
+            elif kind == "client":
+                suffix = f" · {unavailable} unavailable readings" if unavailable else ""
+                self.status_lbl.config(
+                    text=f"Connected (PID {self.mem.pid}) · Multiplayer controls available{suffix}",
+                    fg="#64d8cb",
+                )
+            elif session_error or kind == "unknown":
+                self.status_lbl.config(
+                    text="Connected · session compatibility not confirmed", fg="#edc58c"
+                )
+            elif unavailable:
+                self.status_lbl.config(
+                    text=f"Connected; {unavailable} unavailable readings. Check game compatibility.",
+                    fg="#edc58c",
+                )
+            else:
+                self.status_lbl.config(text=f"Connected (PID {self.mem.pid})", fg="#70ddb1")
 
-        self.after(250, self.refresh_loop)
 
 if __name__ == "__main__":
     app = TrainerApp()
