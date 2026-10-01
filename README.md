@@ -1,6 +1,6 @@
 # Minecraft Dungeons II - Standalone Native Trainer v1.0.4
 
-A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeons-WinGDK-Shipping.exe`), designed for offline singleplayer use. It accesses game memory directly via Win32 Virtual Memory APIs without attaching debuggers, injecting DLLs, or triggering anti-tamper termination.
+A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeons-WinGDK-Shipping.exe`), designed for offline singleplayer use. It accesses game memory directly via Win32 APIs without attaching a debugger or injecting DLLs.
 
 ---
 
@@ -19,7 +19,7 @@ A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeon
 ## Requirements
 
 - Windows 10 or 11 (64-bit)
-- Python 3.10+ (standard library only; zero external packages or pip dependencies required)
+- **64-bit Python 3.10+** with Tcl/Tk (standard library only; no third-party runtime packages)
 - Minecraft Dungeons II (`Dungeons-WinGDK-Shipping.exe`)
 
 ---
@@ -29,6 +29,40 @@ A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeon
 1. Launch Minecraft Dungeons II and load into camp or a mission.
 2. Run `run_trainer.bat` (or execute `python trainer_gui.py` in terminal).
 3. The trainer will automatically detect and attach to the game process.
+
+Keep `trainer_gui.py`, `trainer_memory.py`, `trainer_offsets.py`, and `trainer_widgets.py` together when distributing the trainer.
+
+## Interface and session behavior
+
+- All five v1.0.4 tabs remain available. Option presets and gear toolbars wrap; pages scroll at the supported minimum window size of 880 × 720. Custom option values also accept Enter.
+- The session banner distinguishes local authority (solo or host), multiplayer clients, loading and unknown sessions. Multiplayer alone does not disable commands. The server can still ignore client-side changes.
+- Failed operations appear in the status area. A failed continuous effect stops itself while other effects and live readings continue.
+- Reconnection, character changes and session-mode changes stop continuous effects and clear selected gear and talisman XP history. Re-enable effects for the new character. Reconnection attempts are limited to once every three seconds.
+- Resetting potion/roll settings stops their continuous toggle. Turning these toggles off writes the displayed default settings, which may differ from equipment-specific values. Other disabled locks simply stop repeating writes.
+- Closing the trainer stops polling and closes the process handle. It does not undo earlier game-memory changes. God Mode explicitly restores its captured resistance and relevant flag bit when turned off for the same character.
+
+## Compatibility and limitations
+
+- Offsets remain build-dependent. The session Role offset is restored to `0x168`, reflected in the inspected Microsoft package 1.1.1.0; it is not a guarantee of compatibility with future builds. Local authority cannot distinguish offline solo from hosting.
+- Gear edits re-read the inventory and compare process/character, slot, address and item-name identity before writing. Inventory array sizes are bounded. Inventory talismans are recognized by their tags rather than a fixed slot number.
+- Rarity presets are checked against the running FName table before writing. If an index no longer identifies the expected rarity, the operation fails explicitly. The legacy `Unique` alias maps to `Special`; the interface labels it Special.
+- A successful memory write does **not** prove that gameplay events ran, perks unlocked, the server accepted a change, or a save persisted it. Earlier client-side balance/progression writes did not change the actual displayed balances. Currency freezes and new gear/talisman features still need build-specific in-game validation.
+- Multi-value and batch edits are not atomic. If an operation fails midway, earlier writes may already have applied. Max Out talisman batches report how many items completed before failure. Revalidation reduces stale-address risks but cannot eliminate a game-side change occurring between the final check and the write.
+
+## Development checks
+
+Run on 64-bit Windows with Tcl/Tk installed:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m ruff check .
+python -m ruff format --check .
+python -m unittest -v
+```
+
+Native tests use buffers in their own process. UI and inventory regression tests use simulated memory and never attach to the game. Passing tests verify trainer behavior, not in-game efficacy. Ruff is a development-only dependency.
+
+`trainer_memory.py` owns Win32 access and validated item edits; `trainer_offsets.py` holds build-dependent addresses; `trainer_widgets.py` provides wrapping controls; `trainer_gui.py` contains the application and gameplay commands. `.local/` is ignored and contains only local development artifacts.
 
 ---
 

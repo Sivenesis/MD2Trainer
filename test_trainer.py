@@ -142,6 +142,19 @@ class GuiAndFeaturesTests(unittest.TestCase):
         ):
             self.app = gui.TrainerApp()
             self.app.withdraw()  # Do not display window during automated testing
+        self.app.after_cancel(self.app._refresh_job)
+        self.app._refresh_job = None
+        for name, value in (
+            ("write_float", True),
+            ("write_byte", True),
+            ("read_float", 100.0),
+            ("read_byte", 0x74),
+            ("resolve_chain", 0x10000),
+            ("character_identity", (123, 0x20000)),
+        ):
+            patcher = patch.object(self.app.mem, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self.app.destroy()
@@ -278,6 +291,7 @@ class GuiAndFeaturesTests(unittest.TestCase):
                 self.app.max_out_equipped_talismans()
                 mock_max.assert_called_with(only_equipped=True)
                 mock_box.assert_called_once()
+        self.app.mem.h_proc = None
 
     def test_multipliers_and_setters(self):
         with patch.object(self.app.mem, "write_float") as mock_wf:
@@ -297,6 +311,12 @@ class GuiAndFeaturesTests(unittest.TestCase):
             patch.object(self.app.mem, "write_f32") as mock_wf32,
             patch.object(self.app.mem, "write_float") as mock_wf,
             patch.object(self.app.mem, "write_u32") as mock_wu32,
+            patch.object(
+                self.app.mem,
+                "require_item",
+                return_value={"slot_tag": "SW.ItemSlot.Equipment.MeleeWeapon", "is_talisman": True},
+            ),
+            patch.object(self.app.mem, "get_fname", return_value="SW.Rarity.Special"),
         ):
             # Melee power
             self.app.mem.set_gear_power(0x2000, "SW.ItemSlot.Equipment.MeleeWeapon", 150.0)
