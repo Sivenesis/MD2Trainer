@@ -28,7 +28,7 @@ A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeon
 
 1. Launch Minecraft Dungeons II and load into camp or a mission.
 2. Run `run_trainer.bat` (or execute `python trainer_gui.py` in terminal).
-3. The trainer will automatically detect and attach to the game process.
+3. Pick the game from the **Target process** menu (type to filter, e.g. `Dungeons`; **Refresh List** re-scans), then click **Attach**. The trainer never attaches on its own. **Detach** releases the process; if the game closes, pick it again once it's back.
 
 ---
 

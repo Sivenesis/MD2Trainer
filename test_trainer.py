@@ -103,6 +103,31 @@ class MemoryManagerUnitTests(unittest.TestCase):
             self.assertFalse(self.mem.is_alive())
             self.assertIsNone(self.mem.h_proc)
 
+    def test_list_processes_includes_self(self):
+        procs = memory.list_processes()
+        self.assertIn(os.getpid(), [pid for pid, _name in procs])
+        names = [name.lower() for _pid, name in procs]
+        self.assertEqual(names, sorted(names))
+
+    def test_attach_requires_explicit_pid(self):
+        mgr = memory.MemoryManager()
+        self.assertIsNone(mgr.h_proc)  # nothing is attached on construction
+        self.assertTrue(mgr.attach(os.getpid()))
+        self.assertEqual(mgr.pid, os.getpid())
+        self.assertTrue(mgr.base_addr)
+        self.assertEqual(mgr.blocks_addr, mgr.base_addr + offsets.FNAMES_BLOCKS_OFFSET)
+        mgr.detach()
+        self.assertIsNone(mgr.h_proc)
+        self.assertIsNone(mgr.pid)
+        self.assertEqual(mgr.last_error, memory.MemoryManager.NOT_ATTACHED)
+
+    def test_attach_invalid_pid_fails(self):
+        mgr = memory.MemoryManager()
+        self.assertFalse(mgr.attach("not-a-pid"))
+        self.assertFalse(mgr.attach(0xFFFFFFF0))
+        self.assertIsNone(mgr.h_proc)
+        self.assertTrue(mgr.last_error)
+
     def test_native_pointer_chain_resolve(self):
         resolved = self.mem.resolve_chain(["10", "8"])
         expected = ctypes.addressof(self.target_buf) + 0x10
@@ -136,8 +161,10 @@ class MemoryManagerUnitTests(unittest.TestCase):
 class GuiAndFeaturesTests(unittest.TestCase):
     def setUp(self):
         # Create headless Tkinter app without spawning real process or loop
+        self.fake_procs = [(111, "notepad.exe"), (222, "Dungeons-WinGDK-Shipping.exe")]
         with (
-            patch.object(memory.MemoryManager, "attach", return_value=False),
+            patch.object(gui, "list_processes", return_value=self.fake_procs),
+            patch.object(memory.MemoryManager, "attach", return_value=False) as self.mock_attach,
             patch.object(gui.TrainerApp, "refresh_loop"),
         ):
             self.app = gui.TrainerApp()
@@ -154,6 +181,57 @@ class GuiAndFeaturesTests(unittest.TestCase):
             tab_titles, ["Currencies", "Combat", "Movement", "Progression", "Gear & Talismans"]
         )
         self.assertNotIn("Developer", tab_titles)
+
+    def test_no_auto_attach_on_startup(self):
+        self.mock_attach.assert_not_called()
+        self.assertIsNone(self.app.mem.h_proc)
+        self.assertEqual(self.app.btn_attach.cget("text"), "Attach")
+
+    def test_process_menu_lists_processes(self):
+        labels = list(self.app.process_combo.cget("values"))
+        self.assertEqual(len(labels), 2)
+        self.assertIn(self.app.process_label(222, "Dungeons-WinGDK-Shipping.exe"), labels)
+        self.assertEqual(self.app.process_map[labels[0]], 111)
+
+    def test_attach_without_selection_does_nothing(self):
+        with patch.object(gui, "list_processes", return_value=self.fake_procs):
+            self.app.attach_selected()
+        self.mock_attach.assert_not_called()
+        self.assertIn("Pick a process", self.app.status_lbl.cget("text"))
+
+    def test_attach_selected_process_uses_chosen_pid(self):
+        label = self.app.process_label(222, "Dungeons-WinGDK-Shipping.exe")
+        self.app.process_var.set(label)
+
+        def fake_attach(pid):
+            self.app.mem.h_proc = 123
+            self.app.mem.pid = pid
+            return True
+
+        with (
+            patch.object(self.app.mem, "attach", side_effect=fake_attach) as mock_attach,
+            patch.object(self.app.mem, "get_equipped_gear", return_value=[]),
+        ):
+            self.app.toggle_attach()
+            mock_attach.assert_called_once_with(222)
+        self.assertEqual(self.app.btn_attach.cget("text"), "Detach")
+        self.assertIn("PID 222", self.app.status_lbl.cget("text"))
+
+        with patch.object(memory.k32, "CloseHandle"):  # fake handle; skip the real close
+            self.app.toggle_attach()  # second click detaches
+        self.assertIsNone(self.app.mem.h_proc)
+        self.assertEqual(self.app.btn_attach.cget("text"), "Attach")
+
+    def test_process_filter_narrows_menu(self):
+        self.app.process_var.set("dungeons")
+
+        class Evt:
+            keysym = "s"
+
+        self.app.on_process_filter(Evt())
+        labels = list(self.app.process_combo.cget("values"))
+        self.assertEqual(len(labels), 1)
+        self.assertIn("Dungeons", labels[0])
 
     def test_currency_freeze_toggles(self):
         self.assertFalse(self.app.freeze_emeralds_active)

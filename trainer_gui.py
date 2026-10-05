@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 MINECRAFT DUNGEONS II - STANDALONE NATIVE TRAINER v1.0.4
-Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
+Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline) - pick the process from the menu.
 Direct Win32 Memory Access - Zero Debugger, Zero Watchdog Conflicts, Zero Dependencies.
 """
 
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from trainer_memory import MemoryManager
+from trainer_memory import MemoryAccessError, MemoryManager, list_processes
 
 
 class TrainerApp(tk.Tk):
@@ -20,6 +20,8 @@ class TrainerApp(tk.Tk):
         self.configure(bg="#181825")
 
         self.mem = MemoryManager()
+        self.process_map = {}  # combobox label -> PID
+        self.all_process_labels = []
         self.god_mode_active = False
 
         # Currency Freeze States
@@ -47,7 +49,8 @@ class TrainerApp(tk.Tk):
         self.setup_styles()
         self.create_widgets()
 
-        self.try_connect()
+        self.refresh_process_list()
+        self.update_connection_ui()
         self._refresh_job = self.after(500, self.refresh_loop)
 
     def destroy(self):
@@ -106,6 +109,27 @@ class TrainerApp(tk.Tk):
         )
         style.map("TButton", background=[("active", "#45475a"), ("pressed", "#585b70")])
 
+        # Process picker dropdown
+        style.configure(
+            "TCombobox",
+            fieldbackground="#313244",
+            background="#313244",
+            foreground="#cdd6f4",
+            arrowcolor="#89b4fa",
+            selectbackground="#45475a",
+            selectforeground="#f9e2af",
+            borderwidth=0,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", "#313244"), ("disabled", "#1e1e2e")],
+            foreground=[("disabled", "#6c7086")],
+        )
+        self.option_add("*TCombobox*Listbox.background", "#313244")
+        self.option_add("*TCombobox*Listbox.foreground", "#cdd6f4")
+        self.option_add("*TCombobox*Listbox.selectBackground", "#45475a")
+        self.option_add("*TCombobox*Listbox.selectForeground", "#f9e2af")
+
         # Treeview styling
         style.configure(
             "Gear.Treeview",
@@ -144,15 +168,38 @@ class TrainerApp(tk.Tk):
 
         self.status_lbl = tk.Label(
             top_bar,
-            text="Searching for game process...",
+            text=MemoryManager.NOT_ATTACHED,
             font=("Segoe UI", 9, "bold"),
             bg="#181825",
             fg="#f38ba8",
         )
         self.status_lbl.pack(side="right", padx=10)
 
-        refresh_btn = ttk.Button(top_bar, text="Reconnect", command=self.try_connect)
-        refresh_btn.pack(side="right")
+        # Process picker bar (manual target selection - no auto-detect)
+        proc_bar = tk.Frame(self, bg="#181825", padx=16)
+        proc_bar.pack(fill="x")
+
+        tk.Label(
+            proc_bar,
+            text="Target process:",
+            font=("Segoe UI", 9, "bold"),
+            bg="#181825",
+            fg="#cdd6f4",
+        ).pack(side="left", padx=(0, 8))
+
+        self.process_var = tk.StringVar()
+        self.process_combo = ttk.Combobox(
+            proc_bar, textvariable=self.process_var, width=52, font=("Segoe UI", 9)
+        )
+        self.process_combo.pack(side="left", padx=(0, 8))
+        self.process_combo.bind("<KeyRelease>", self.on_process_filter)
+        self.process_combo.bind("<Return>", lambda _e: self.toggle_attach())
+
+        ttk.Button(proc_bar, text="Refresh List", command=self.refresh_process_list).pack(
+            side="left", padx=(0, 8)
+        )
+        self.btn_attach = ttk.Button(proc_bar, text="Attach", command=self.toggle_attach)
+        self.btn_attach.pack(side="left")
 
         # Notebook
         self.notebook = ttk.Notebook(self)
@@ -175,14 +222,76 @@ class TrainerApp(tk.Tk):
         self.notebook.add(frame, text=name)
         return frame
 
-    def try_connect(self):
-        if self.mem.attach():
-            self.status_lbl.config(
-                text=f"Attached: Dungeons-WinGDK-Shipping.exe (PID {self.mem.pid})", fg="#a6e3a1"
-            )
+    # ==========================================
+    # Process selection (manual; the trainer never attaches on its own)
+    # ==========================================
+    @staticmethod
+    def process_label(pid, name):
+        return f"{name}  (PID {pid})"
+
+    def refresh_process_list(self):
+        """Re-enumerate running processes and fill the dropdown."""
+        try:
+            procs = list_processes()
+        except MemoryAccessError as exc:
+            self.status_lbl.config(text=str(exc), fg="#f38ba8")
+            return
+        self.process_map = {self.process_label(pid, name): pid for pid, name in procs}
+        self.all_process_labels = list(self.process_map)
+        self.process_combo.config(values=self.all_process_labels)
+        # Keep the current choice only if that process still exists
+        if self.process_var.get() not in self.process_map:
+            self.process_var.set("")
+
+    def on_process_filter(self, event):
+        """Narrow the dropdown to entries containing the typed text."""
+        if event.keysym in ("Return", "Up", "Down", "Left", "Right", "Tab", "Escape"):
+            return
+        text = self.process_var.get().strip().lower()
+        if text:
+            matches = [lbl for lbl in self.all_process_labels if text in lbl.lower()]
+        else:
+            matches = self.all_process_labels
+        self.process_combo.config(values=matches)
+
+    def toggle_attach(self):
+        if self.mem.h_proc:
+            self.detach_process()
+        else:
+            self.attach_selected()
+
+    def attach_selected(self):
+        pid = self.process_map.get(self.process_var.get())
+        if pid is None:
+            self.refresh_process_list()
+            pid = self.process_map.get(self.process_var.get())
+        if pid is None:
+            self.status_lbl.config(text="Pick a process from the list first.", fg="#f38ba8")
+            return
+        self.last_talisman_xp.clear()
+        self.mem.attach(pid)
+        self.update_connection_ui()
+        if self.mem.h_proc:
             self.refresh_gear_table()
+
+    def detach_process(self):
+        self.mem.detach()
+        self.last_talisman_xp.clear()
+        self.update_connection_ui()
+
+    def update_connection_ui(self):
+        """Sync the status label, Attach/Detach button, and picker with the connection state."""
+        if self.mem.h_proc:
+            self.status_lbl.config(
+                text=f"Attached: {self.process_var.get().strip()} (PID {self.mem.pid})",
+                fg="#a6e3a1",
+            )
+            self.btn_attach.config(text="Detach")
+            self.process_combo.config(state="disabled")
         else:
             self.status_lbl.config(text=self.mem.last_error, fg="#f38ba8")
+            self.btn_attach.config(text="Attach")
+            self.process_combo.config(state="normal")
 
     # ==========================================
     # Tab 1: Currencies (Emeralds, Echo Shards, Enchantment Points with Freeze, and Gain Mult)
@@ -1799,9 +1908,10 @@ class TrainerApp(tk.Tk):
         return (lbl_val, key, is_byte)
 
     def refresh_loop(self):
-        if not self.mem.is_alive():
-            self.status_lbl.config(text=self.mem.last_error, fg="#f38ba8")
-            self.try_connect()
+        if self.mem.h_proc and not self.mem.is_alive():
+            # Target exited: drop the connection and wait for the user to pick again
+            self.update_connection_ui()
+            self.refresh_process_list()
 
         if self.mem.h_proc:
             # Continuous locks

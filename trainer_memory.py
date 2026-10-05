@@ -1,10 +1,12 @@
 """
 Minecraft Dungeons II - Process Memory Manager & Win32 I/O Layer
 Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
+The target process is chosen by the user (list_processes() + MemoryManager.attach(pid)).
 """
 
 import ctypes
 import math
+import ntpath
 import struct
 from ctypes import wintypes
 
@@ -20,6 +22,7 @@ psapi = ctypes.windll.psapi
 
 # Process Memory Access Constants
 PROCESS_QUERY_INFORMATION = 0x0400
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 PROCESS_VM_OPERATION = 0x0008
@@ -28,8 +31,19 @@ PROCESS_ACCESS = (
 )
 
 # Win32 API Function Signatures
+k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+k32.OpenProcess.restype = wintypes.HANDLE
+
 k32.CloseHandle.argtypes = [wintypes.HANDLE]
 k32.CloseHandle.restype = wintypes.BOOL
+
+k32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+]
+k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 
 k32.K32EnumProcesses.argtypes = [
     ctypes.POINTER(wintypes.DWORD),
@@ -89,15 +103,51 @@ def classify_session_role(role):
     return "unknown"
 
 
+def list_processes():
+    """Return [(pid, exe_name)] for every process this user can query, sorted by name."""
+    bytes_needed = wintypes.DWORD()
+    capacity = 2048
+    while True:
+        pids = (wintypes.DWORD * capacity)()
+        if not k32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(bytes_needed)):
+            raise MemoryAccessError(
+                f"Cannot list processes (Windows error {ctypes.GetLastError()})."
+            )
+        if bytes_needed.value < ctypes.sizeof(pids):
+            break
+        capacity *= 2
+    process_count = bytes_needed.value // ctypes.sizeof(wintypes.DWORD)
+
+    found = []
+    for i in range(process_count):
+        pid = pids[i]
+        if pid == 0:
+            continue
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            continue
+        try:
+            size = wintypes.DWORD(32768)
+            path = ctypes.create_unicode_buffer(size.value)
+            if k32.QueryFullProcessImageNameW(h, 0, path, ctypes.byref(size)):
+                found.append((pid, ntpath.basename(path.value)))
+        finally:
+            k32.CloseHandle(h)
+    found.sort(key=lambda item: (item[1].lower(), item[0]))
+    return found
+
+
 class MemoryManager:
     """Manages process attachment, memory reads/writes, pointer chains, and game structures."""
+
+    NOT_ATTACHED = "Not attached. Select a process and click Attach."
 
     def __init__(self):
         self.pid = None
         self.base_addr = None
         self.h_proc = None
         self.blocks_addr = None
-        self.last_error = "Game not found. Waiting for Dungeons-WinGDK-Shipping.exe..."
+        self.last_error = self.NOT_ATTACHED
 
     def close(self):
         if self.h_proc:
@@ -107,69 +157,52 @@ class MemoryManager:
         self.base_addr = None
         self.blocks_addr = None
 
+    def detach(self):
+        self.close()
+        self.last_error = self.NOT_ATTACHED
+
     def is_alive(self):
         if not self.h_proc:
             return False
         code = wintypes.DWORD()
         if not k32.GetExitCodeProcess(self.h_proc, ctypes.byref(code)) or code.value != 259:
             self.close()
-            self.last_error = "Game closed or connection lost. Waiting to reconnect..."
+            self.last_error = "Process exited or connection lost. Select a process to re-attach."
             return False
         return True
 
-    def attach(self):
+    def attach(self, pid):
+        """Attach to the process with the given PID (chosen by the user)."""
         self.close()
-        self.last_error = "Game not found. Waiting for Dungeons-WinGDK-Shipping.exe..."
-        bytes_needed = wintypes.DWORD()
-        capacity = 2048
-        while True:
-            pids = (wintypes.DWORD * capacity)()
-            if not k32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(bytes_needed)):
-                self.last_error = (
-                    f"Cannot list processes (Windows error {ctypes.get_last_error()})."
-                )
-                return False
-            if bytes_needed.value < ctypes.sizeof(pids):
-                break
-            capacity *= 2
-        process_count = bytes_needed.value // ctypes.sizeof(wintypes.DWORD)
-
-        for i in range(process_count):
-            pid = pids[i]
-            if pid == 0:
-                continue
-            h = k32.OpenProcess(0x0410, False, pid)
-            if not h:
-                continue
-            try:
-                mods = (wintypes.HMODULE * 1)()
-                cb = wintypes.DWORD()
-                if psapi.EnumProcessModulesEx(h, mods, ctypes.sizeof(mods), ctypes.byref(cb), 3):
-                    mod_name = (ctypes.c_char * 260)()
-                    psapi.GetModuleBaseNameA(h, mods[0], mod_name, 260)
-                    if (
-                        mod_name.value.decode(errors="ignore").lower()
-                        == "dungeons-wingdk-shipping.exe"
-                    ):
-                        self.pid = pid
-                        self.base_addr = mods[0]
-                        break
-            finally:
-                k32.CloseHandle(h)
-
-        if not self.pid:
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            self.last_error = "Invalid process ID."
             return False
 
-        self.h_proc = k32.OpenProcess(PROCESS_ACCESS, False, self.pid)
-        if self.h_proc:
-            self.blocks_addr = self.base_addr + FNAMES_BLOCKS_OFFSET
-            return True
-        else:
+        h = k32.OpenProcess(PROCESS_ACCESS, False, pid)
+        if not h:
             self.last_error = (
-                f"Process found, but access denied (Windows error {ctypes.get_last_error()})."
+                f"Cannot open process {pid}: access denied or it exited "
+                f"(Windows error {ctypes.GetLastError()}). Try running as administrator."
             )
-            self.close()
             return False
+
+        mods = (wintypes.HMODULE * 1)()
+        cb = wintypes.DWORD()
+        if not psapi.EnumProcessModulesEx(h, mods, ctypes.sizeof(mods), ctypes.byref(cb), 3):
+            self.last_error = (
+                f"Cannot read modules of process {pid} (Windows error {ctypes.GetLastError()})."
+            )
+            k32.CloseHandle(h)
+            return False
+
+        self.h_proc = h
+        self.pid = pid
+        self.base_addr = mods[0]
+        self.blocks_addr = self.base_addr + FNAMES_BLOCKS_OFFSET
+        self.last_error = ""
+        return True
 
     def read_memory(self, address, size):
         if not self.h_proc or not address:
