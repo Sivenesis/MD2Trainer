@@ -5,10 +5,13 @@ Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
 Direct Win32 Memory Access - Zero Debugger, Zero Watchdog Conflicts, Zero Dependencies.
 """
 
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from trainer_memory import MemoryManager
+from trainer_memory import MemoryAccessError, MemoryManager, finite_float
+from trainer_offsets import CHAINS
+from trainer_widgets import FlowFrame
 
 
 class TrainerApp(tk.Tk):
@@ -17,9 +20,18 @@ class TrainerApp(tk.Tk):
         self.title("Minecraft Dungeons II - Native Trainer v1.0.4")
         self.geometry("940x800")
         self.minsize(880, 720)
-        self.configure(bg="#181825")
+        self.configure(bg="#0b111b")
 
         self.mem = MemoryManager()
+        self.value_rows = []
+        self.next_connect_at = 0.0
+        self.session_identity = None
+        self.session_kind = "disconnected"
+        self._god_original = None
+        self._god_original_pid = None
+        self._god_identity = None
+        self._closing = False
+        self.effect_controls = ()
         self.god_mode_active = False
 
         # Currency Freeze States
@@ -47,78 +59,129 @@ class TrainerApp(tk.Tk):
         self.setup_styles()
         self.create_widgets()
 
+        self.effect_controls = (
+            ("god_mode_active", "btn_god", "God mode", "apply_god_mode"),
+            (
+                "freeze_emeralds_active",
+                "btn_freeze_emeralds",
+                "Freeze emeralds",
+                "apply_freeze_emeralds",
+            ),
+            (
+                "freeze_springstone_active",
+                "btn_freeze_springstone",
+                "Freeze shards",
+                "apply_freeze_springstone",
+            ),
+            ("freeze_ench_active", "btn_freeze_ench", "Freeze enchantment", "apply_freeze_ench"),
+            ("freeze_souls_active", "btn_freeze_souls", "Freeze souls", "apply_freeze_souls"),
+            ("auto_refill_ammo_active", "btn_auto_refill", "Infinite arrows", "apply_auto_refill"),
+            ("lock_speed_active", "btn_lock_speed", "Lock speed", "apply_lock_speed"),
+            (
+                "infinite_potions_active",
+                "btn_infinite_potions",
+                "Infinite potions",
+                "apply_infinite_potions",
+            ),
+            ("infinite_roll_active", "btn_infinite_roll", "Infinite roll", "apply_infinite_roll"),
+            ("lock_player_dmg_active", "btn_lock_dmg", "Lock damage", "apply_locked_damage"),
+            ("lock_xp_gain_active", "btn_lock_xp", "Lock XP", "apply_locked_xp"),
+        )
         self.try_connect()
         self._refresh_job = self.after(500, self.refresh_loop)
 
     def destroy(self):
-        if hasattr(self, "_refresh_job") and self._refresh_job:
-            try:
-                self.after_cancel(self._refresh_job)
-                self._refresh_job = None
-            except Exception:
-                pass
+        self._closing = True
+        if getattr(self, "_refresh_job", None):
+            self.after_cancel(self._refresh_job)
+            self._refresh_job = None
+        self.mem.close()
         super().destroy()
 
     def setup_styles(self):
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("TNotebook", background="#181825", borderwidth=0)
+        style.configure(
+            "TNotebook",
+            background="#0b111b",
+            borderwidth=0,
+            bordercolor="#0b111b",
+            lightcolor="#0b111b",
+            darkcolor="#0b111b",
+        )
+        for name in ("Horizontal.TScrollbar", "Vertical.TScrollbar"):
+            style.configure(
+                name,
+                background="#223146",
+                troughcolor="#0b111b",
+                borderwidth=0,
+                bordercolor="#0b111b",
+                lightcolor="#223146",
+                darkcolor="#223146",
+                arrowcolor="#8fa2b8",
+                arrowsize=12,
+            )
+        style.configure(
+            "TNotebook.Tab", bordercolor="#0b111b", lightcolor="#0b111b", darkcolor="#0b111b"
+        )
         style.configure(
             "TNotebook.Tab",
-            background="#1e1e2e",
-            foreground="#cdd6f4",
+            background="#131e2c",
+            foreground="#e6eef8",
             padding=[16, 6],
             font=("Segoe UI", 10, "bold"),
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", "#313244")],
-            foreground=[("selected", "#89b4fa")],
+            background=[("selected", "#223146")],
+            foreground=[("selected", "#64d8cb")],
         )
-        style.configure("TFrame", background="#181825")
-        style.configure("Card.TFrame", background="#1e1e2e", relief="flat")
-        style.configure("TLabel", background="#1e1e2e", foreground="#cdd6f4", font=("Segoe UI", 9))
+        style.configure("TFrame", background="#0b111b")
+        style.configure("Card.TFrame", background="#131e2c", relief="flat")
+        style.configure("TLabel", background="#131e2c", foreground="#e6eef8", font=("Segoe UI", 9))
         style.configure(
             "Header.TLabel",
-            background="#181825",
-            foreground="#89b4fa",
+            background="#0b111b",
+            foreground="#64d8cb",
             font=("Segoe UI", 12, "bold"),
         )
         style.configure(
             "Status.TLabel",
-            background="#181825",
-            foreground="#a6e3a1",
+            background="#0b111b",
+            foreground="#70ddb1",
             font=("Segoe UI", 9, "bold"),
         )
         style.configure(
             "Value.TLabel",
-            background="#1e1e2e",
+            background="#131e2c",
             foreground="#f9e2af",
             font=("Consolas", 10, "bold"),
         )
         style.configure(
             "TButton",
-            background="#313244",
-            foreground="#cdd6f4",
+            background="#223146",
+            foreground="#e6eef8",
             font=("Segoe UI", 9),
             borderwidth=0,
             padding=[6, 3],
         )
+        style.configure("Accent.TButton", background="#64d8cb", foreground="#081c18")
+        style.map("Accent.TButton", background=[("active", "#70ddb1")])
         style.map("TButton", background=[("active", "#45475a"), ("pressed", "#585b70")])
 
         # Treeview styling
         style.configure(
             "Gear.Treeview",
-            background="#181825",
-            foreground="#cdd6f4",
-            fieldbackground="#181825",
+            background="#0b111b",
+            foreground="#e6eef8",
+            fieldbackground="#0b111b",
             font=("Segoe UI", 9),
             rowheight=24,
         )
         style.configure(
             "Gear.Treeview.Heading",
-            background="#313244",
-            foreground="#89b4fa",
+            background="#223146",
+            foreground="#64d8cb",
             font=("Segoe UI", 9, "bold"),
             padding=[4, 4],
         )
@@ -130,30 +193,49 @@ class TrainerApp(tk.Tk):
 
     def create_widgets(self):
         # Top Header Bar
-        top_bar = tk.Frame(self, bg="#181825", padx=16, pady=10)
+        top_bar = tk.Frame(self, bg="#0b111b", padx=16, pady=10)
         top_bar.pack(fill="x")
 
         title_lbl = tk.Label(
             top_bar,
             text="MINECRAFT DUNGEONS II - NATIVE TRAINER v1.0.4",
             font=("Segoe UI", 13, "bold"),
-            bg="#181825",
-            fg="#89b4fa",
+            bg="#0b111b",
+            fg="#64d8cb",
         )
         title_lbl.pack(side="left")
 
+        ttk.Button(top_bar, text="Reconnect", command=self.try_connect).pack(side="right")
         self.status_lbl = tk.Label(
-            top_bar,
+            self,
             text="Searching for game process...",
-            font=("Segoe UI", 9, "bold"),
-            bg="#181825",
-            fg="#f38ba8",
+            bg="#0b111b",
+            fg="#8fa2b8",
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
         )
-        self.status_lbl.pack(side="right", padx=10)
+        self.status_lbl.pack(side="bottom", fill="x", padx=18, pady=10)
+        self.status_lbl.bind(
+            "<Configure>",
+            lambda event: self.status_lbl.config(wraplength=max(200, event.width - 16)),
+        )
 
-        refresh_btn = ttk.Button(top_bar, text="Reconnect", command=self.try_connect)
-        refresh_btn.pack(side="right")
-
+        self.session_label = tk.Label(
+            self,
+            text="Waiting for game",
+            bg="#122b2e",
+            fg="#64d8cb",
+            font=("Segoe UI", 10),
+            anchor="w",
+            padx=16,
+            pady=10,
+        )
+        self.session_label.pack(fill="x", padx=14)
+        self.session_label.bind(
+            "<Configure>",
+            lambda event: self.session_label.config(wraplength=max(200, event.width - 32)),
+        )
         # Notebook
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=14, pady=8)
@@ -169,20 +251,98 @@ class TrainerApp(tk.Tk):
         self.build_movement_tab()
         self.build_progression_tab()
         self.build_gear_talismans_tab()
+        self.finish_layout()
+        self.bind_all("<MouseWheel>", self.scroll_page, add="+")
+
+    def finish_layout(self):
+        def visit(widget):
+            if isinstance(widget, FlowFrame) and not widget.items:
+                for child in widget.winfo_children():
+                    child.pack_forget()
+                    widget.add(child)
+            if isinstance(widget, tk.Label):
+                widget.config(justify="left")
+                widget.bind(
+                    "<Configure>",
+                    lambda event, label=widget: label.config(
+                        wraplength=max(180, label.master.winfo_width() - 40)
+                    ),
+                )
+            for child in widget.winfo_children():
+                visit(child)
+
+        for tab in (
+            self.tab_currencies,
+            self.tab_combat,
+            self.tab_movement,
+            self.tab_progression,
+            self.tab_gear,
+        ):
+            visit(tab)
+            for child in tab.winfo_children():
+                if (
+                    isinstance(child, tk.Frame)
+                    and not getattr(child, "is_option_card", False)
+                    and child.winfo_manager() == "grid"
+                ):
+                    child.grid_configure(sticky="ew", pady=(0, 12))
+                    for control in child.winfo_children():
+                        control.pack_forget()
+                        control.pack(anchor="w", pady=4)
+
+    def scroll_page(self, event):
+        # Keep the gear table's own scrolling behavior when the pointer is over it.
+        if event.widget == self.gear_tree:
+            return
+        container = self.nametowidget(self.notebook.select())
+        canvas = next(w for w in container.winfo_children() if isinstance(w, tk.Canvas))
+        if canvas.yview() != (0.0, 1.0):
+            canvas.yview_scroll(-int(event.delta / 120), "units")
 
     def create_tab(self, name):
-        frame = tk.Frame(self.notebook, bg="#1e1e2e", padx=16, pady=16)
-        self.notebook.add(frame, text=name)
+        container = tk.Frame(self.notebook, bg="#0b111b")
+        self.notebook.add(container, text=name)
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+        canvas = tk.Canvas(container, bg="#0b111b", highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+
+        def update_scrollbar(scrollbar, first, last):
+            scrollbar.set(first, last)
+            if float(first) <= 0 and float(last) >= 1:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid()
+
+        canvas.configure(
+            yscrollcommand=lambda first, last: update_scrollbar(vertical, first, last),
+            xscrollcommand=lambda first, last: update_scrollbar(horizontal, first, last),
+        )
+        frame = tk.Frame(canvas, bg="#0b111b", padx=4, pady=12)
+        frame.columnconfigure(0, weight=1)
+        window = canvas.create_window((0, 0), window=frame, anchor="nw")
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(
+                window, width=max(event.width, frame.winfo_reqwidth())
+            ),
+        )
+        frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
         return frame
 
     def try_connect(self):
+        self.reset_session()
+        self.next_connect_at = time.monotonic() + 3.0
         if self.mem.attach():
             self.status_lbl.config(
-                text=f"Attached: Dungeons-WinGDK-Shipping.exe (PID {self.mem.pid})", fg="#a6e3a1"
+                text=f"Connected (PID {self.mem.pid}); loading character...", fg="#edc58c"
             )
-            self.refresh_gear_table()
         else:
-            self.status_lbl.config(text=self.mem.last_error, fg="#f38ba8")
+            self.status_lbl.config(text=self.mem.last_error, fg="#f58a92")
 
     # ==========================================
     # Tab 1: Currencies (Emeralds, Echo Shards, Enchantment Points with Freeze, and Gain Mult)
@@ -205,14 +365,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Freeze Emeralds Row
-        frz_em_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        frz_em_frame = tk.Frame(f, bg="#131e2c", pady=2)
         frz_em_frame.grid(row=1, column=0, columnspan=5, sticky="w")
         self.btn_freeze_emeralds = tk.Button(
             frz_em_frame,
             text="FREEZE EMERALDS (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=3,
             relief="flat",
@@ -222,8 +382,8 @@ class TrainerApp(tk.Tk):
         tk.Label(
             frz_em_frame,
             text="Locks Emeralds continuously to max/current amount (Unlimited purchases)",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         ).pack(side="left", padx=10)
 
@@ -242,14 +402,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Freeze Echo Shards Row
-        frz_sp_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        frz_sp_frame = tk.Frame(f, bg="#131e2c", pady=2)
         frz_sp_frame.grid(row=3, column=0, columnspan=5, sticky="w")
         self.btn_freeze_springstone = tk.Button(
             frz_sp_frame,
             text="FREEZE ECHO SHARDS (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=3,
             relief="flat",
@@ -259,8 +419,8 @@ class TrainerApp(tk.Tk):
         tk.Label(
             frz_sp_frame,
             text="Locks Echo Shards balance continuously to prevent consumption",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         ).pack(side="left", padx=10)
 
@@ -279,14 +439,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Freeze Enchantment Points Row
-        frz_ep_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        frz_ep_frame = tk.Frame(f, bg="#131e2c", pady=2)
         frz_ep_frame.grid(row=5, column=0, columnspan=5, sticky="w")
         self.btn_freeze_ench = tk.Button(
             frz_ep_frame,
             text="FREEZE ENCH POINTS (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=3,
             relief="flat",
@@ -296,20 +456,20 @@ class TrainerApp(tk.Tk):
         tk.Label(
             frz_ep_frame,
             text="Locks Enchantment Points continuously so enchanting equipment never depletes points",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         ).pack(side="left", padx=10)
 
         # Master Freeze All Currencies Row
-        frz_all_frame = tk.Frame(f, bg="#1e1e2e", pady=6)
+        frz_all_frame = tk.Frame(f, bg="#131e2c", pady=6)
         frz_all_frame.grid(row=6, column=0, columnspan=5, sticky="w")
         self.btn_freeze_all = tk.Button(
             frz_all_frame,
             text="FREEZE ALL CURRENCIES (TOGGLE)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#89b4fa",
+            bg="#223146",
+            fg="#64d8cb",
             padx=14,
             pady=4,
             relief="flat",
@@ -335,30 +495,21 @@ class TrainerApp(tk.Tk):
         )
 
     def set_emeralds(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("emeralds_cap_base", max(9999.0, val))
         self.mem.write_float("emeralds_cap_cur", max(9999.0, val))
         self.mem.write_float("emeralds_base", val)
         self.mem.write_float("emeralds_current", val)
 
     def adjust_emeralds(self, delta):
-        cur = self.mem.read_float("emeralds_current") or 0.0
+        cur = self.mem.require_float("emeralds_current")
         self.set_emeralds(cur + delta)
 
     def toggle_freeze_emeralds(self):
-        self.freeze_emeralds_active = not self.freeze_emeralds_active
-        if self.freeze_emeralds_active:
-            self.btn_freeze_emeralds.config(
-                text="EMERALDS: FROZEN (LOCKED)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_freeze_emeralds()
-        else:
-            self.btn_freeze_emeralds.config(
-                text="FREEZE EMERALDS (OFF)", bg="#313244", fg="#f38ba8"
-            )
+        self.toggle_effect("freeze_emeralds_active")
 
     def apply_freeze_emeralds(self):
-        cap = self.mem.read_float("emeralds_cap_cur") or 9999.0
+        cap = self.mem.require_float("emeralds_cap_cur")
         val = max(cap, 9999.0)
         self.mem.write_float("emeralds_cap_base", val)
         self.mem.write_float("emeralds_cap_cur", val)
@@ -366,30 +517,21 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("emeralds_current", val)
 
     def set_springstone(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("springstone_cap_base", max(9999.0, val))
         self.mem.write_float("springstone_cap_cur", max(9999.0, val))
         self.mem.write_float("springstone_base", val)
         self.mem.write_float("springstone_current", val)
 
     def adjust_springstone(self, delta):
-        cur = self.mem.read_float("springstone_current") or 0.0
+        cur = self.mem.require_float("springstone_current")
         self.set_springstone(cur + delta)
 
     def toggle_freeze_springstone(self):
-        self.freeze_springstone_active = not self.freeze_springstone_active
-        if self.freeze_springstone_active:
-            self.btn_freeze_springstone.config(
-                text="ECHO SHARDS: FROZEN (LOCKED)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_freeze_springstone()
-        else:
-            self.btn_freeze_springstone.config(
-                text="FREEZE ECHO SHARDS (OFF)", bg="#313244", fg="#f38ba8"
-            )
+        self.toggle_effect("freeze_springstone_active")
 
     def apply_freeze_springstone(self):
-        cap = self.mem.read_float("springstone_cap_cur") or 9999.0
+        cap = self.mem.require_float("springstone_cap_cur")
         val = max(cap, 9999.0)
         self.mem.write_float("springstone_cap_base", val)
         self.mem.write_float("springstone_cap_cur", val)
@@ -397,23 +539,18 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("springstone_current", val)
 
     def set_ench_points(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("ench_points_cap_base", max(99.0, val))
         self.mem.write_float("ench_points_cap_cur", max(99.0, val))
         self.mem.write_float("ench_points_base", val)
         self.mem.write_float("ench_points_cur", val)
 
     def adjust_ench_points(self, delta):
-        cur = self.mem.read_float("ench_points_cur") or 0.0
+        cur = self.mem.require_float("ench_points_cur")
         self.set_ench_points(cur + delta)
 
     def toggle_freeze_ench(self):
-        self.freeze_ench_active = not self.freeze_ench_active
-        if self.freeze_ench_active:
-            self.btn_freeze_ench.config(text="ENCH POINTS: FROZEN (99)", bg="#a6e3a1", fg="#11111b")
-            self.apply_freeze_ench()
-        else:
-            self.btn_freeze_ench.config(text="FREEZE ENCH POINTS (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("freeze_ench_active")
 
     def apply_freeze_ench(self):
         val = 99.0
@@ -444,7 +581,7 @@ class TrainerApp(tk.Tk):
                 self.toggle_freeze_ench()
 
     def set_currency_gain(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         if mult <= 1.0:
             self.mem.write_float("emerald_increase_base", 0.0)
             self.mem.write_float("emerald_increase_cur", 0.0)
@@ -456,7 +593,7 @@ class TrainerApp(tk.Tk):
             self.mem.write_float("soul_gather_cur", 1.0)
         else:
             pct = mult - 1.0
-            max_add = max(1.0, mult * 5.0)
+            max_add = finite_float(max(1.0, mult * 5.0))
             self.mem.write_float("emerald_increase_base", pct)
             self.mem.write_float("emerald_increase_cur", pct)
             self.mem.write_float("emerald_max_add_base", max_add)
@@ -473,14 +610,14 @@ class TrainerApp(tk.Tk):
         f = self.tab_combat
 
         # God Mode Toggle Button
-        god_frame = tk.Frame(f, bg="#1e1e2e", pady=3)
+        god_frame = tk.Frame(f, bg="#131e2c", pady=3)
         god_frame.grid(row=0, column=0, columnspan=5, sticky="w")
         self.btn_god = tk.Button(
             god_frame,
             text="TOGGLE GOD MODE (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=14,
             pady=4,
             relief="flat",
@@ -490,9 +627,9 @@ class TrainerApp(tk.Tk):
 
         god_hint = tk.Label(
             god_frame,
-            text="Locks Health to Max, Damage Resistance to 0 (Immune), Invincible Byte ON",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            text="Keeps health and shield full while active",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         god_hint.pack(side="left", padx=10)
@@ -516,14 +653,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Lock Player Damage Row
-        lock_dmg_frame = tk.Frame(f, bg="#1e1e2e", pady=1)
+        lock_dmg_frame = tk.Frame(f, bg="#131e2c", pady=1)
         lock_dmg_frame.grid(row=2, column=0, columnspan=5, sticky="w")
         self.btn_lock_dmg = tk.Button(
             lock_dmg_frame,
             text="LOCK DAMAGE (OFF)",
             font=("Segoe UI", 8, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=10,
             pady=2,
             relief="flat",
@@ -533,8 +670,8 @@ class TrainerApp(tk.Tk):
         lbl_dmg_hint = tk.Label(
             lock_dmg_frame,
             text="Locks damage multiplier continuously so attacks/animations cannot reset multiplier",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_dmg_hint.pack(side="left", padx=10)
@@ -582,14 +719,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Infinite Potions Toggle Row
-        pot_frame = tk.Frame(f, bg="#1e1e2e", pady=1)
+        pot_frame = tk.Frame(f, bg="#131e2c", pady=1)
         pot_frame.grid(row=7, column=0, columnspan=5, sticky="w")
         self.btn_infinite_potions = tk.Button(
             pot_frame,
             text="INFINITE POTIONS (OFF)",
             font=("Segoe UI", 8, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=10,
             pady=2,
             relief="flat",
@@ -599,8 +736,8 @@ class TrainerApp(tk.Tk):
         lbl_pot_hint = tk.Label(
             pot_frame,
             text="Infinite Potions: Locks potion charges to 5 and auto-recharges instantly",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_pot_hint.pack(side="left", padx=10)
@@ -672,14 +809,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Freeze Souls Toggle Row
-        freeze_souls_frame = tk.Frame(f, bg="#1e1e2e", pady=1)
+        freeze_souls_frame = tk.Frame(f, bg="#131e2c", pady=1)
         freeze_souls_frame.grid(row=13, column=0, columnspan=5, sticky="w")
         self.btn_freeze_souls = tk.Button(
             freeze_souls_frame,
             text="FREEZE SOULS (OFF)",
             font=("Segoe UI", 8, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=10,
             pady=2,
             relief="flat",
@@ -689,8 +826,8 @@ class TrainerApp(tk.Tk):
         lbl_souls_hint = tk.Label(
             freeze_souls_frame,
             text="Locks Souls to Max capacity continuously (Unlimited Soul Artifact activations)",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_souls_hint.pack(side="left", padx=10)
@@ -707,14 +844,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Auto-Refill Ammo Toggle Row
-        refill_frame = tk.Frame(f, bg="#1e1e2e", pady=1)
+        refill_frame = tk.Frame(f, bg="#131e2c", pady=1)
         refill_frame.grid(row=15, column=0, columnspan=5, sticky="w")
         self.btn_auto_refill = tk.Button(
             refill_frame,
             text="AUTO-REFILL ARROWS (OFF)",
             font=("Segoe UI", 8, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=10,
             pady=2,
             relief="flat",
@@ -724,8 +861,8 @@ class TrainerApp(tk.Tk):
         lbl_refill_hint = tk.Label(
             refill_frame,
             text="Infinite Arrows: Keeps ammo topped to max every game tick",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_refill_hint.pack(side="left", padx=10)
@@ -746,7 +883,7 @@ class TrainerApp(tk.Tk):
         )
 
     def set_player_damage(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         self.locked_player_dmg_val = mult
         self.apply_player_damage(mult)
 
@@ -761,19 +898,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("artifact_damage_cur", mult)
 
     def toggle_lock_player_damage(self):
-        self.lock_player_dmg_active = not self.lock_player_dmg_active
-        if self.lock_player_dmg_active:
-            cur = self.mem.read_float("player_dmg_mult_cur") or 1.0
-            if cur > 1.0:
-                self.locked_player_dmg_val = cur
-            self.btn_lock_dmg.config(
-                text=f"DAMAGE LOCKED ({self.locked_player_dmg_val:.1f}x)",
-                bg="#a6e3a1",
-                fg="#11111b",
-            )
-            self.apply_player_damage(self.locked_player_dmg_val)
-        else:
-            self.btn_lock_dmg.config(text="LOCK DAMAGE (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("lock_player_dmg_active")
 
     def set_instant_artifact(self):
         self.mem.write_float("artifact_cd_base", 0.05)
@@ -784,7 +909,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("artifact_cd", 1.0)
 
     def set_potion_cd(self, val):
-        val = float(val)
+        val = finite_float(val)
         val = max(0.05, val)
         self.mem.write_float("potion_base_cd_base", val)
         self.mem.write_float("potion_base_cd_cur", val)
@@ -806,6 +931,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 5.0)
 
     def reset_potion(self):
+        self.infinite_potions_active = False
+        self.btn_infinite_potions.config(text="INFINITE POTIONS (OFF)", bg="#223146", fg="#f58a92")
         self.mem.write_float("potion_base_cd_base", 30.0)
         self.mem.write_float("potion_base_cd_cur", 30.0)
         self.mem.write_float("potion_cd_base", 1.0)
@@ -816,17 +943,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 1.0)
 
     def toggle_infinite_potions(self):
-        self.infinite_potions_active = not self.infinite_potions_active
-        if self.infinite_potions_active:
-            self.btn_infinite_potions.config(
-                text="INFINITE POTIONS: ON", bg="#a6e3a1", fg="#11111b"
-            )
-            self.set_instant_potion()
-            self.apply_infinite_potions()
-        else:
-            self.btn_infinite_potions.config(
-                text="INFINITE POTIONS (OFF)", bg="#313244", fg="#f38ba8"
-            )
+        self.toggle_effect("infinite_potions_active")
 
     def apply_infinite_potions(self):
         self.mem.write_float("potion_max_charges_base", 5.0)
@@ -835,24 +952,55 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("potion_charges_cur", 5.0)
 
     def toggle_god_mode(self):
-        self.god_mode_active = not self.god_mode_active
-        if self.god_mode_active:
-            self.btn_god.config(text="GOD MODE: ACTIVE (IMMUNE)", bg="#a6e3a1", fg="#11111b")
+        if not self.god_mode_active:
             self.apply_god_mode()
         else:
-            self.btn_god.config(text="TOGGLE GOD MODE (OFF)", bg="#313244", fg="#f38ba8")
-            self.mem.write_float("damage_resist", 1.0)
-            self.mem.write_byte("actor_invincible", 116)
+            if self._god_original and self._god_identity == self.mem.character_identity():
+                resist_addr, resistance, flag_addr, flag = self._god_original
+                if self.mem.resolve_chain(CHAINS["damage_resist"]) == resist_addr:
+                    self.mem.write_float("damage_resist", resistance)
+                if self.mem.resolve_chain(CHAINS["actor_invincible"]) == flag_addr:
+                    current = self.mem.read_byte("actor_invincible")
+                    if current is None:
+                        raise MemoryAccessError("Cannot read actor flags.")
+                    self.mem.write_byte("actor_invincible", (current & ~0x04) | (flag & 0x04))
+            self._god_original = None
+        self.god_mode_active = not self.god_mode_active
+        if self.god_mode_active:
+            self.btn_god.config(text="GOD MODE: ACTIVE (IMMUNE)", bg="#70ddb1", fg="#081c18")
+        else:
+            self.btn_god.config(text="TOGGLE GOD MODE (OFF)", bg="#223146", fg="#f58a92")
 
     def apply_god_mode(self):
-        h_max = self.mem.read_float("health_max") or 100.0
+        resistance_addr = self.mem.resolve_chain(CHAINS["damage_resist"])
+        flag_addr = self.mem.resolve_chain(CHAINS["actor_invincible"])
+        flag = self.mem.read_byte("actor_invincible")
+        if not resistance_addr or not flag_addr or flag is None:
+            raise MemoryAccessError("Cannot read God Mode attributes.")
+        if (
+            self._god_original is None
+            or self._god_identity != self.mem.character_identity()
+            or self._god_original[0] != resistance_addr
+            or self._god_original[2] != flag_addr
+        ):
+            self._god_original = (
+                resistance_addr,
+                self.mem.require_float("damage_resist"),
+                flag_addr,
+                flag,
+            )
+            self._god_original_pid = self.mem.pid
+            self._god_identity = self.mem.character_identity()
+        h_max = self.mem.require_float("health_max")
+        shield_max = self.mem.require_float("shield_max")
         self.mem.write_float("health_current", h_max)
-        self.mem.write_float("shield_current", 100.0)
+        self.mem.write_float("shield_current", shield_max)
         self.mem.write_float("damage_resist", 0.0)
-        self.mem.write_byte("actor_invincible", 112)
+        # Preserve unrelated actor flags; the previous 116 -> 112 change clears bit 2.
+        self.mem.write_byte("actor_invincible", flag & ~0x04)
 
     def full_heal(self):
-        h_max = self.mem.read_float("health_max") or 100.0
+        h_max = self.mem.require_float("health_max")
         self.mem.write_float("health_current", h_max)
 
     def set_health(self, val):
@@ -864,28 +1012,21 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("multishot_count", 5.0)
 
     def set_souls(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("souls_cap_base", max(100.0, val))
         self.mem.write_float("souls_cap_cur", max(100.0, val))
         self.mem.write_float("souls_base", val)
         self.mem.write_float("souls_current", val)
 
     def adjust_souls(self, delta):
-        cur = self.mem.read_float("souls_current") or 0.0
+        cur = self.mem.require_float("souls_current")
         self.set_souls(cur + delta)
 
     def toggle_freeze_souls(self):
-        self.freeze_souls_active = not self.freeze_souls_active
-        if self.freeze_souls_active:
-            self.btn_freeze_souls.config(
-                text="SOULS: FROZEN (INFINITE)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_freeze_souls()
-        else:
-            self.btn_freeze_souls.config(text="FREEZE SOULS (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("freeze_souls_active")
 
     def apply_freeze_souls(self):
-        s_cap = self.mem.read_float("souls_cap_cur") or 100.0
+        s_cap = self.mem.require_float("souls_cap_cur")
         s_val = max(s_cap, 99999.0)
         self.mem.write_float("souls_cap_base", s_val)
         self.mem.write_float("souls_cap_cur", s_val)
@@ -893,8 +1034,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("souls_current", s_val)
 
     def set_ammo(self, val):
-        val = float(val)
-        cur_max = self.mem.read_float("ammo_max_cur") or 15.0
+        val = finite_float(val)
+        cur_max = self.mem.require_float("ammo_max_cur")
         if val > cur_max:
             self.mem.write_float("ammo_max_base", val)
             self.mem.write_float("ammo_max_cur", val)
@@ -908,17 +1049,10 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("ammo_current", 999.0)
 
     def toggle_auto_refill(self):
-        self.auto_refill_ammo_active = not self.auto_refill_ammo_active
-        if self.auto_refill_ammo_active:
-            self.btn_auto_refill.config(
-                text="AUTO-REFILL: ON (INFINITE)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_auto_refill()
-        else:
-            self.btn_auto_refill.config(text="AUTO-REFILL ARROWS (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("auto_refill_ammo_active")
 
     def apply_auto_refill(self):
-        m = self.mem.read_float("ammo_max_cur") or 999.0
+        m = self.mem.require_float("ammo_max_cur")
         m = max(m, 999.0)
         self.mem.write_float("ammo_max_base", m)
         self.mem.write_float("ammo_max_cur", m)
@@ -926,7 +1060,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("ammo_current", m)
 
     def set_rapid_fire(self, spd):
-        spd = float(spd)
+        spd = finite_float(spd)
         self.mem.write_float("rapid_fire_base", spd)
         self.mem.write_float("rapid_fire_cur", spd)
 
@@ -953,14 +1087,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Lock Speed Multiplier Toggle Row
-        speed_lock_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        speed_lock_frame = tk.Frame(f, bg="#131e2c", pady=2)
         speed_lock_frame.grid(row=1, column=0, columnspan=5, sticky="w")
         self.btn_lock_speed = tk.Button(
             speed_lock_frame,
             text="LOCK SPEED (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=4,
             relief="flat",
@@ -970,8 +1104,8 @@ class TrainerApp(tk.Tk):
         lbl_speed_hint = tk.Label(
             speed_lock_frame,
             text="Locks speed multiplier so attacks / montages cannot reset speed to 1.0",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_speed_hint.pack(side="left", padx=10)
@@ -1018,14 +1152,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Infinite Roll Toggle Row
-        roll_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        roll_frame = tk.Frame(f, bg="#131e2c", pady=2)
         roll_frame.grid(row=5, column=0, columnspan=5, sticky="w")
         self.btn_infinite_roll = tk.Button(
             roll_frame,
             text="INFINITE ROLL (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=4,
             relief="flat",
@@ -1035,8 +1169,8 @@ class TrainerApp(tk.Tk):
         lbl_roll_hint = tk.Label(
             roll_frame,
             text="Infinite Roll: Continually keeps roll charges at 5 for nonstop tumbling",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_roll_hint.pack(side="left", padx=10)
@@ -1057,7 +1191,7 @@ class TrainerApp(tk.Tk):
         )
 
     def set_roll_cd(self, val):
-        val = float(val)
+        val = finite_float(val)
         val = max(0.05, val)
         self.mem.write_float("roll_cd_base", val)
         self.mem.write_float("roll_cd", val)
@@ -1075,6 +1209,8 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 5.0)
 
     def reset_roll(self):
+        self.infinite_roll_active = False
+        self.btn_infinite_roll.config(text="INFINITE ROLL (OFF)", bg="#223146", fg="#f58a92")
         self.mem.write_float("roll_cd_base", 2.5)
         self.mem.write_float("roll_cd", 2.5)
         self.mem.write_float("roll_max_charges_base", 1.0)
@@ -1083,13 +1219,7 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 1.0)
 
     def toggle_infinite_roll(self):
-        self.infinite_roll_active = not self.infinite_roll_active
-        if self.infinite_roll_active:
-            self.btn_infinite_roll.config(text="INFINITE ROLL: ON", bg="#a6e3a1", fg="#11111b")
-            self.set_instant_roll()
-            self.apply_infinite_roll()
-        else:
-            self.btn_infinite_roll.config(text="INFINITE ROLL (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("infinite_roll_active")
 
     def apply_infinite_roll(self):
         self.mem.write_float("roll_max_charges_base", 5.0)
@@ -1098,23 +1228,13 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("roll_charges_cur", 5.0)
 
     def set_speed(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.locked_speed_val = val
         self.mem.write_float("move_mult_base", val)
         self.mem.write_float("move_mult_cur", val)
 
     def toggle_lock_speed(self):
-        self.lock_speed_active = not self.lock_speed_active
-        if self.lock_speed_active:
-            cur = self.mem.read_float("move_mult_cur") or 1.0
-            if cur > 1.0:
-                self.locked_speed_val = cur
-            self.btn_lock_speed.config(
-                text=f"SPEED LOCKED ({self.locked_speed_val:.1f}x)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_lock_speed()
-        else:
-            self.btn_lock_speed.config(text="LOCK SPEED (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("lock_speed_active")
 
     def apply_lock_speed(self):
         self.mem.write_float("move_mult_base", self.locked_speed_val)
@@ -1145,14 +1265,14 @@ class TrainerApp(tk.Tk):
         )
 
         # Lock XP Multiplier Toggle Row
-        lock_xp_frame = tk.Frame(f, bg="#1e1e2e", pady=2)
+        lock_xp_frame = tk.Frame(f, bg="#131e2c", pady=2)
         lock_xp_frame.grid(row=1, column=0, columnspan=5, sticky="w")
         self.btn_lock_xp = tk.Button(
             lock_xp_frame,
             text="LOCK XP MULT (OFF)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#f38ba8",
+            bg="#223146",
+            fg="#f58a92",
             padx=12,
             pady=4,
             relief="flat",
@@ -1161,9 +1281,9 @@ class TrainerApp(tk.Tk):
         self.btn_lock_xp.pack(side="left")
         lbl_xp_hint = tk.Label(
             lock_xp_frame,
-            text="Continuously locks XP yield multiplier so camp/mission changes keep your boost",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            text="Keeps the XP multiplier active for this character; changing character stops the lock",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_xp_hint.pack(side="left", padx=10)
@@ -1286,7 +1406,7 @@ class TrainerApp(tk.Tk):
         )
 
     def set_xp_gain(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         self.locked_xp_gain_val = mult
         self.apply_xp_gain(mult)
 
@@ -1295,20 +1415,10 @@ class TrainerApp(tk.Tk):
         self.mem.write_float("xp_gain_mult_cur", mult)
 
     def toggle_lock_xp_gain(self):
-        self.lock_xp_gain_active = not self.lock_xp_gain_active
-        if self.lock_xp_gain_active:
-            cur = self.mem.read_float("xp_gain_mult_cur") or 1.0
-            if cur > 1.0:
-                self.locked_xp_gain_val = cur
-            self.btn_lock_xp.config(
-                text=f"XP MULT LOCKED ({self.locked_xp_gain_val:.1f}x)", bg="#a6e3a1", fg="#11111b"
-            )
-            self.apply_xp_gain(self.locked_xp_gain_val)
-        else:
-            self.btn_lock_xp.config(text="LOCK XP MULT (OFF)", bg="#313244", fg="#f38ba8")
+        self.toggle_effect("lock_xp_gain_active")
 
     def set_master_loot(self, mult):
-        mult = float(mult)
+        mult = finite_float(mult)
         if mult <= 1.0:
             self.mem.write_float("drop_dup_base", 0.0)
             self.mem.write_float("drop_duplication", 0.0)
@@ -1331,32 +1441,32 @@ class TrainerApp(tk.Tk):
             self.mem.write_float("drop_chance", mult)
 
     def set_drop_duplication(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("drop_dup_base", val)
         self.mem.write_float("drop_duplication", val)
-        cur_payouts = self.mem.read_float("max_payouts_cur") or 1.0
+        cur_payouts = self.mem.require_float("max_payouts_cur")
         needed = max(1.0, val + 1.0)
         if cur_payouts < needed:
             self.mem.write_float("max_payouts_base", needed)
             self.mem.write_float("max_payouts_cur", needed)
 
     def set_max_payouts(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("max_payouts_base", val)
         self.mem.write_float("max_payouts_cur", val)
 
     def set_looting_multiplier(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("loot_mult_base", val)
         self.mem.write_float("loot_multiplier", val)
 
     def set_rarity_bonus(self, val):
-        val = float(val)
+        val = finite_float(val)
         self.mem.write_float("rarity_bonus_base", val)
         self.mem.write_float("rarity_bonus", val)
 
     def adjust_xp(self, delta):
-        cur = self.mem.read_float("xp_current") or 0.0
+        cur = self.mem.require_float("xp_current")
         self.mem.write_float("xp_current", cur + delta)
 
     def max_all_vendors(self):
@@ -1375,8 +1485,8 @@ class TrainerApp(tk.Tk):
         tal_card = tk.LabelFrame(
             f,
             text=" TALISMANS PROGRESSION & GROWTH ",
-            bg="#1e1e2e",
-            fg="#89b4fa",
+            bg="#131e2c",
+            fg="#64d8cb",
             font=("Segoe UI", 10, "bold"),
             padx=12,
             pady=10,
@@ -1384,20 +1494,20 @@ class TrainerApp(tk.Tk):
         tal_card.pack(fill="x", pady=(0, 10))
 
         # Growth Multiplier Row
-        t_row = tk.Frame(tal_card, bg="#1e1e2e")
+        t_row = FlowFrame(tal_card, bg="#131e2c")
         t_row.pack(fill="x", pady=4)
 
         tk.Label(
             t_row,
             text="Growth Multiplier:",
-            bg="#1e1e2e",
-            fg="#cdd6f4",
+            bg="#131e2c",
+            fg="#e6eef8",
             font=("Segoe UI", 9, "bold"),
         ).pack(side="left", padx=(0, 10))
         self.lbl_tal_growth_val = tk.Label(
             t_row,
             text="1.0x",
-            bg="#1e1e2e",
+            bg="#131e2c",
             fg="#f9e2af",
             font=("Consolas", 10, "bold"),
             width=9,
@@ -1410,9 +1520,9 @@ class TrainerApp(tk.Tk):
             t_row,
             textvariable=self.tal_entry_var,
             width=6,
-            bg="#313244",
-            fg="#cdd6f4",
-            insertbackground="#cdd6f4",
+            bg="#223146",
+            fg="#e6eef8",
+            insertbackground="#e6eef8",
             relief="flat",
             font=("Consolas", 9),
         )
@@ -1423,8 +1533,8 @@ class TrainerApp(tk.Tk):
             if val:
                 try:
                     self.set_talisman_growth(float(val))
-                except ValueError:
-                    pass
+                except (ValueError, MemoryAccessError, OverflowError) as exc:
+                    self.show_error(exc)
 
         ttk.Button(t_row, text="Set", command=on_set_tal_growth, width=4).pack(
             side="left", padx=(0, 8)
@@ -1443,14 +1553,14 @@ class TrainerApp(tk.Tk):
             )
 
         # Talisman Action Buttons
-        t_act_row = tk.Frame(tal_card, bg="#1e1e2e")
+        t_act_row = FlowFrame(tal_card, bg="#131e2c")
         t_act_row.pack(fill="x", pady=6)
 
         btn_max_tal = tk.Button(
             t_act_row,
             text="MAX OUT EQUIPPED TALISMANS",
             font=("Segoe UI", 9, "bold"),
-            bg="#a6e3a1",
+            bg="#70ddb1",
             fg="#11111b",
             padx=12,
             pady=4,
@@ -1463,8 +1573,8 @@ class TrainerApp(tk.Tk):
             t_act_row,
             text="MAX ALL TALISMANS (INVENTORY)",
             font=("Segoe UI", 9, "bold"),
-            bg="#313244",
-            fg="#89b4fa",
+            bg="#223146",
+            fg="#64d8cb",
             padx=12,
             pady=4,
             relief="flat",
@@ -1479,9 +1589,9 @@ class TrainerApp(tk.Tk):
 
         lbl_tal_hint = tk.Label(
             tal_card,
-            text="Talisman XP gains in combat are auto-scaled in real-time. Max Out sets Level to Max Rank and unlocks all tier perks.",
-            bg="#1e1e2e",
-            fg="#a6adc8",
+            text="Talisman XP gains in combat are auto-scaled in real-time. Max Out writes rank/XP; perk activation and persistence require in-game verification.",
+            bg="#131e2c",
+            fg="#8fa2b8",
             font=("Segoe UI", 8),
         )
         lbl_tal_hint.pack(anchor="w", pady=(2, 0))
@@ -1490,8 +1600,8 @@ class TrainerApp(tk.Tk):
         gear_card = tk.LabelFrame(
             f,
             text=" CURRENT EQUIPPED GEAR EDITOR ",
-            bg="#1e1e2e",
-            fg="#89b4fa",
+            bg="#131e2c",
+            fg="#64d8cb",
             font=("Segoe UI", 10, "bold"),
             padx=12,
             pady=10,
@@ -1499,7 +1609,7 @@ class TrainerApp(tk.Tk):
         gear_card.pack(fill="both", expand=True)
 
         # Batch Operations Header
-        batch_row = tk.Frame(gear_card, bg="#1e1e2e")
+        batch_row = FlowFrame(gear_card, bg="#131e2c")
         batch_row.pack(fill="x", pady=(0, 8))
 
         ttk.Button(
@@ -1512,15 +1622,15 @@ class TrainerApp(tk.Tk):
             text="Super Max Power (250)",
             command=lambda: self.batch_set_gear_power(250.0),
         ).pack(side="left", padx=3)
-        ttk.Button(
-            batch_row, text="Make All Unique/Special", command=self.batch_make_gear_special
-        ).pack(side="left", padx=3)
+        ttk.Button(batch_row, text="Make All Special", command=self.batch_make_gear_special).pack(
+            side="left", padx=3
+        )
         ttk.Button(batch_row, text="Refresh Gear List", command=self.refresh_gear_table).pack(
             side="right", padx=3
         )
 
         # Treeview Table
-        tree_frame = tk.Frame(gear_card, bg="#181825")
+        tree_frame = tk.Frame(gear_card, bg="#0b111b")
         tree_frame.pack(fill="both", expand=True, pady=4)
 
         columns = ("slot", "name", "power", "rarity", "progress")
@@ -1548,32 +1658,32 @@ class TrainerApp(tk.Tk):
         self.gear_tree.bind("<<TreeviewSelect>>", self.on_gear_item_selected)
 
         # Selected Item Controls Bar
-        self.sel_frame = tk.Frame(gear_card, bg="#1e1e2e", pady=8)
+        self.sel_frame = tk.Frame(gear_card, bg="#131e2c", pady=8)
         self.sel_frame.pack(fill="x")
 
         self.lbl_selected_item = tk.Label(
             self.sel_frame,
             text="Select an item above to customize its Power and Rarity",
-            bg="#1e1e2e",
+            bg="#131e2c",
             fg="#f9e2af",
             font=("Segoe UI", 9, "bold"),
         )
         self.lbl_selected_item.pack(anchor="w", pady=(0, 6))
 
-        ctrl_row = tk.Frame(self.sel_frame, bg="#1e1e2e")
+        ctrl_row = FlowFrame(self.sel_frame, bg="#131e2c")
         ctrl_row.pack(fill="x")
 
         tk.Label(
-            ctrl_row, text="Power:", bg="#1e1e2e", fg="#cdd6f4", font=("Segoe UI", 9, "bold")
+            ctrl_row, text="Power:", bg="#131e2c", fg="#e6eef8", font=("Segoe UI", 9, "bold")
         ).pack(side="left", padx=(0, 6))
         self.gear_power_var = tk.StringVar()
         self.entry_gear_power = tk.Entry(
             ctrl_row,
             textvariable=self.gear_power_var,
             width=7,
-            bg="#313244",
-            fg="#cdd6f4",
-            insertbackground="#cdd6f4",
+            bg="#223146",
+            fg="#e6eef8",
+            insertbackground="#e6eef8",
             relief="flat",
             font=("Consolas", 9),
         )
@@ -1594,10 +1704,10 @@ class TrainerApp(tk.Tk):
             ).pack(side="left", padx=2)
 
         tk.Label(
-            ctrl_row, text=" |  Rarity:", bg="#1e1e2e", fg="#cdd6f4", font=("Segoe UI", 9, "bold")
+            ctrl_row, text=" |  Rarity:", bg="#131e2c", fg="#e6eef8", font=("Segoe UI", 9, "bold")
         ).pack(side="left", padx=(8, 6))
         ttk.Button(
-            ctrl_row, text="Make Unique", command=lambda: self.set_selected_rarity("Special")
+            ctrl_row, text="Make Special", command=lambda: self.set_selected_rarity("Special")
         ).pack(side="left", padx=2)
         ttk.Button(
             ctrl_row, text="Make Rare", command=lambda: self.set_selected_rarity("Rare")
@@ -1607,7 +1717,11 @@ class TrainerApp(tk.Tk):
         ).pack(side="left", padx=2)
 
     def set_talisman_growth(self, mult):
-        self.talisman_growth_mult = float(mult)
+        mult = finite_float(mult)
+        if mult < 1:
+            raise ValueError("Growth multiplier must be at least 1.")
+        self.talisman_growth_mult = mult
+        self.last_talisman_xp.clear()
         self.lbl_tal_growth_val.config(text=f"{self.talisman_growth_mult:.1f}x")
 
     def max_out_equipped_talismans(self):
@@ -1616,7 +1730,7 @@ class TrainerApp(tk.Tk):
         if cnt > 0:
             messagebox.showinfo(
                 "Talismans Maxed",
-                f"Successfully maxed out {cnt} equipped talisman(s) to Max Rank & 100k XP!",
+                f"Wrote rank/XP for {cnt} equipped talisman(s) to Max Rank & 100k XP!",
             )
 
     def max_out_all_talismans(self):
@@ -1625,7 +1739,7 @@ class TrainerApp(tk.Tk):
         if cnt > 0:
             messagebox.showinfo(
                 "Talismans Maxed",
-                f"Successfully maxed out {cnt} talisman(s) across equipment and inventory!",
+                f"Wrote rank/XP for {cnt} talisman(s) across equipment and inventory!",
             )
 
     def add_xp_to_talismans(self):
@@ -1634,7 +1748,7 @@ class TrainerApp(tk.Tk):
             if it["is_talisman"]:
                 addr = it["item_addr"]
                 cur_xp = self.mem.read_f32(addr + 0x6C)
-                self.mem.write_f32(addr + 0x6C, cur_xp + 10000.0)
+                self.mem.set_talisman_xp(it, cur_xp + 10000.0)
         self.refresh_gear_table()
 
     def refresh_gear_table(self):
@@ -1645,6 +1759,8 @@ class TrainerApp(tk.Tk):
         if sel:
             selected_slot = self.gear_tree.item(sel[0], "values")[0]
 
+        self.selected_gear_item = None
+        self.lbl_selected_item.config(text="Select an item to edit its power and rarity")
         for row in self.gear_tree.get_children():
             self.gear_tree.delete(row)
 
@@ -1687,45 +1803,56 @@ class TrainerApp(tk.Tk):
         val = self.gear_power_var.get().strip()
         if val:
             try:
-                pwr = float(val)
+                pwr = finite_float(val)
                 self.mem.set_gear_power(
-                    self.selected_gear_item["item_addr"], self.selected_gear_item["slot_tag"], pwr
+                    self.selected_gear_item["item_addr"],
+                    self.selected_gear_item["slot_tag"],
+                    pwr,
+                    expected=self.selected_gear_item,
                 )
                 self.refresh_gear_table()
-            except ValueError:
-                pass
+            except (ValueError, MemoryAccessError, OverflowError) as exc:
+                self.show_error(exc)
 
     def adjust_selected_power(self, val):
         if not self.selected_gear_item:
             return
         if val in [50, 100, 250]:
-            pwr = float(val)
+            pwr = finite_float(val)
         else:
-            cur = self.selected_gear_item["power"]
+            current = self.mem.require_item(
+                self.selected_gear_item["item_addr"], self.selected_gear_item
+            )
+            cur = current["power"]
             pwr = max(1.0, (cur if cur > 0 else 10.0) + val)
         self.mem.set_gear_power(
-            self.selected_gear_item["item_addr"], self.selected_gear_item["slot_tag"], pwr
+            self.selected_gear_item["item_addr"],
+            self.selected_gear_item["slot_tag"],
+            pwr,
+            expected=self.selected_gear_item,
         )
         self.refresh_gear_table()
 
     def set_selected_rarity(self, rarity_name):
         if not self.selected_gear_item:
             return
-        self.mem.set_gear_rarity(self.selected_gear_item["item_addr"], rarity_name)
+        self.mem.set_gear_rarity(
+            self.selected_gear_item["item_addr"], rarity_name, expected=self.selected_gear_item
+        )
         self.refresh_gear_table()
 
     def batch_set_gear_power(self, power_val):
         items = self.mem.get_equipped_gear()
         for it in items:
             if not it["is_talisman"]:
-                self.mem.set_gear_power(it["item_addr"], it["slot_tag"], power_val)
+                self.mem.set_gear_power(it["item_addr"], it["slot_tag"], power_val, expected=it)
         self.refresh_gear_table()
 
     def batch_make_gear_special(self):
         items = self.mem.get_equipped_gear()
         for it in items:
             if not it["is_talisman"]:
-                self.mem.set_gear_rarity(it["item_addr"], "Special")
+                self.mem.set_gear_rarity(it["item_addr"], "Special", expected=it)
         self.refresh_gear_table()
 
     # ==========================================
@@ -1742,177 +1869,259 @@ class TrainerApp(tk.Tk):
         is_byte=False,
         setter=None,
     ):
-        lbl_title = tk.Label(
-            parent, text=label_text, bg="#1e1e2e", fg="#cdd6f4", font=("Segoe UI", 9, "bold")
-        )
-        lbl_title.grid(row=row_idx, column=0, sticky="w", pady=4, padx=(0, 10))
-
-        lbl_val = tk.Label(
+        short_titles = {
+            "emeralds_current": "Emeralds",
+            "springstone_current": "Echo Shards",
+            "ench_points_cur": "Enchantment points",
+            "emerald_increase_cur": "Currency gain multiplier (Emeralds & Souls)",
+            "souls_current": "Soul energy",
+            "ammo_current": "Arrow supply",
+            "rapid_fire_cur": "Bow attack speed",
+            "health_current": "Health",
+            "shield_current": "Shield",
+            "artifact_cd": "Artifact cooldown",
+            "potion_base_cd_cur": "Potion cooldown",
+            "crit_chance": "Critical hit chance",
+            "melee_speed": "Melee attack speed",
+            "melee_reach": "Melee reach",
+            "multishot_chance": "Multishot",
+            "move_mult_cur": "Movement speed",
+            "jump_velocity": "Jump height",
+            "gravity": "Gravity",
+            "roll_cd": "Roll cooldown",
+            "time_dilation": "Player time scale",
+            "level": "Character level",
+            "xp_current": "Experience",
+            "camera_fov": "Field of view",
+        }
+        card = tk.Frame(
             parent,
-            text="---",
-            bg="#1e1e2e",
-            fg="#f9e2af",
-            font=("Consolas", 10, "bold"),
-            width=11,
-            anchor="w",
+            bg="#131e2c",
+            padx=16,
+            pady=14,
+            highlightthickness=1,
+            highlightbackground="#223146",
         )
-        lbl_val.grid(row=row_idx, column=1, sticky="w", pady=4, padx=(0, 8))
-
-        btn_frame = tk.Frame(parent, bg="#1e1e2e")
-        btn_frame.grid(row=row_idx, column=2, sticky="w", pady=4)
-
+        card.is_option_card = True
+        card.grid(row=row_idx, column=0, columnspan=5, sticky="ew", pady=(0, 12))
+        card.columnconfigure(0, weight=1)
+        tk.Label(
+            card,
+            text=short_titles.get(key, label_text.rstrip(":")),
+            bg="#131e2c",
+            fg="#e6eef8",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        lbl_val = tk.Label(
+            card,
+            text="\u2014",
+            bg="#131e2c",
+            fg="#64d8cb",
+            font=("Segoe UI", 13, "bold"),
+            anchor="e",
+        )
+        lbl_val.grid(row=0, column=1, sticky="e")
+        controls = FlowFrame(card, bg="#131e2c")
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         if custom_entry:
+            input_group = tk.Frame(controls, bg="#131e2c")
+            tk.Label(
+                input_group, text="Custom", bg="#131e2c", fg="#8fa2b8", font=("Segoe UI", 9)
+            ).pack(side="left", padx=(0, 8))
             entry_var = tk.StringVar()
             entry = tk.Entry(
-                btn_frame,
+                input_group,
                 textvariable=entry_var,
-                width=7,
-                bg="#313244",
-                fg="#cdd6f4",
-                insertbackground="#cdd6f4",
+                width=9,
+                bg="#0b111b",
+                fg="#e6eef8",
+                insertbackground="#e6eef8",
                 relief="flat",
-                font=("Consolas", 9),
+                font=("Segoe UI", 11),
+                highlightthickness=1,
+                highlightbackground="#344b64",
+                highlightcolor="#64d8cb",
             )
-            entry.pack(side="left", padx=(0, 4))
+            entry.pack(side="left", padx=(0, 8), ipady=6)
 
             def on_set():
                 val = entry_var.get().strip()
                 if val:
                     try:
-                        num = float(val) if not is_byte else int(val)
+                        num = finite_float(val) if not is_byte else int(val)
                         if setter:
                             setter(num)
                         elif is_byte:
                             self.mem.write_byte(key, num)
                         else:
                             self.mem.write_float(key, num)
-                    except ValueError:
-                        pass
+                    except (ValueError, OverflowError) as exc:
+                        messagebox.showerror("Invalid value", str(exc), parent=self)
 
-            btn_set = ttk.Button(btn_frame, text="Set", command=on_set, width=4)
-            btn_set.pack(side="left", padx=(0, 8))
-
+            entry.bind("<Return>", lambda event: on_set())
+            ttk.Button(input_group, text="Apply", command=on_set, style="Accent.TButton").pack(
+                side="left"
+            )
+            controls.add(input_group)
         for text, cmd in buttons:
-            b = ttk.Button(btn_frame, text=text, command=cmd)
-            b.pack(side="left", padx=3)
+            controls.add(ttk.Button(controls, text=text, command=cmd))
+        row = (lbl_val, key, is_byte)
+        self.value_rows.append(row)
+        return row
 
-        return (lbl_val, key, is_byte)
+    def show_error(self, error):
+        self.status_lbl.config(text=str(error), fg="#f58a92")
+
+    def report_callback_exception(self, exc_type, exc_value, traceback):
+        self.show_error(exc_value)
+        if not isinstance(exc_value, (MemoryAccessError, ValueError, OverflowError)):
+            super().report_callback_exception(exc_type, exc_value, traceback)
+
+    def toggle_effect(self, flag):
+        _, button_name, label, method = next(
+            item for item in self.effect_controls if item[0] == flag
+        )
+        button = getattr(self, button_name)
+        if getattr(self, flag):
+            setattr(self, flag, False)
+            button.config(text=f"{label} (OFF)", bg="#223146", fg="#f58a92")
+            if flag == "infinite_potions_active":
+                self.reset_potion()
+            elif flag == "infinite_roll_active":
+                self.reset_roll()
+            return
+        locks = {
+            "lock_speed_active": ("move_mult_cur", "locked_speed_val"),
+            "lock_player_dmg_active": ("player_dmg_mult_cur", "locked_player_dmg_val"),
+            "lock_xp_gain_active": ("xp_gain_mult_cur", "locked_xp_gain_val"),
+        }
+        if flag in locks:
+            key, attribute = locks[flag]
+            setattr(self, attribute, self.mem.require_float(key))
+        if flag == "infinite_potions_active":
+            self.set_instant_potion()
+        elif flag == "infinite_roll_active":
+            self.set_instant_roll()
+        getattr(self, method)()
+        setattr(self, flag, True)
+        state = "FROZEN" if flag.startswith("freeze_") else "ON"
+        button.config(text=f"{label}: {state}", bg="#70ddb1", fg="#081c18")
+
+    def reset_effects(self):
+        for flag, button, label, method in self.effect_controls:
+            setattr(self, flag, False)
+            getattr(self, button).config(text=f"{label} (OFF)", bg="#223146", fg="#f58a92")
+        self._god_original = None
+        self._god_original_pid = None
+        self._god_identity = None
+
+    def reset_session(self):
+        self.reset_effects()
+        self.session_identity = None
+        self.session_kind = "disconnected"
+        self.selected_gear_item = None
+        self.current_gear_cache = []
+        self.last_talisman_xp.clear()
+        self.talisman_growth_mult = 1.0
+        self.lbl_tal_growth_val.config(text="1.0x")
+        for row in self.gear_tree.get_children():
+            self.gear_tree.delete(row)
+        self.lbl_selected_item.config(text="Refresh the gear list after loading a character")
+        for label, key, is_byte in self.value_rows:
+            label.config(text="---")
+
+    def apply_locked_damage(self):
+        self.apply_player_damage(self.locked_player_dmg_val)
+
+    def apply_locked_xp(self):
+        self.apply_xp_gain(self.locked_xp_gain_val)
+
+    def update_talisman_growth(self):
+        if self.talisman_growth_mult <= 1:
+            self.last_talisman_xp.clear()
+            return
+        history = {}
+        for item in self.mem.get_equipped_gear():
+            if not item["is_talisman"]:
+                continue
+            key = (item["identity"], item["slot_tag"], item["item_addr"], item["name_index"])
+            xp = item["xp"]
+            previous = self.last_talisman_xp.get(key)
+            if previous is not None and xp > previous:
+                xp = finite_float(xp + (xp - previous) * (self.talisman_growth_mult - 1))
+                self.mem.set_talisman_xp(item, xp)
+            history[key] = xp
+        self.last_talisman_xp = history
+
+    def refresh_values(self):
+        if not self.mem.is_alive():
+            self.reset_session()
+            if time.monotonic() >= self.next_connect_at:
+                self.try_connect()
+            self.session_label.config(text="DISCONNECTED - launch the game and load a character")
+            return
+        identity = self.mem.character_identity()
+        kind = self.mem.session_kind()
+        if identity != self.session_identity or kind != self.session_kind:
+            self.reset_session()
+            self.session_identity = identity
+            self.session_kind = kind
+            self.status_lbl.config(
+                text=f"Connected (PID {self.mem.pid}); character/session changed, effects reset.",
+                fg="#8fa2b8",
+            )
+        labels = {
+            "client": "MULTIPLAYER - all commands available; server-managed changes may be ignored",
+            "local": "LOCAL AUTHORITY - solo or host; effects depend on game compatibility",
+            "loading": "LOADING CHARACTER - waiting for readable values",
+            "unknown": "UNKNOWN SESSION - check game compatibility",
+            "disconnected": "DISCONNECTED - waiting for the game",
+        }
+        self.session_label.config(text=labels[kind])
+        if identity is None or kind not in ("local", "client"):
+            return
+        errors = []
+        for flag, button, label, method in self.effect_controls:
+            if getattr(self, flag):
+                try:
+                    getattr(self, method)()
+                except (MemoryAccessError, ValueError, OverflowError) as exc:
+                    setattr(self, flag, False)
+                    getattr(self, button).config(
+                        text=f"{label} (ERROR)", bg="#223146", fg="#f58a92"
+                    )
+                    errors.append(f"{label}: {exc}")
+        try:
+            self.update_talisman_growth()
+        except (MemoryAccessError, ValueError, OverflowError) as exc:
+            self.last_talisman_xp.clear()
+            self.talisman_growth_mult = 1.0
+            self.lbl_tal_growth_val.config(text="1.0x (stopped)")
+            errors.append(str(exc))
+        for label, key, is_byte in self.value_rows:
+            value = self.mem.read_byte(key) if is_byte else self.mem.read_float(key)
+            if value is None:
+                text = "---"
+            elif key == "emerald_increase_cur":
+                text = f"{value + 1:.1f}x"
+            elif key in ("player_dmg_mult_cur", "xp_gain_mult_cur"):
+                text = f"{value:.1f}x"
+            else:
+                text = f"{value:,.2f}".rstrip("0").rstrip(".")
+            label.config(text=text)
+        if errors:
+            self.show_error(" | ".join(errors))
 
     def refresh_loop(self):
-        if not self.mem.is_alive():
-            self.status_lbl.config(text=self.mem.last_error, fg="#f38ba8")
-            self.try_connect()
-
-        if self.mem.h_proc:
-            # Continuous locks
-            if self.god_mode_active:
-                self.apply_god_mode()
-
-            if self.freeze_emeralds_active:
-                self.apply_freeze_emeralds()
-
-            if self.freeze_springstone_active:
-                self.apply_freeze_springstone()
-
-            if self.freeze_ench_active:
-                self.apply_freeze_ench()
-
-            if self.freeze_souls_active:
-                self.apply_freeze_souls()
-
-            if self.auto_refill_ammo_active:
-                self.apply_auto_refill()
-
-            if self.lock_speed_active:
-                self.apply_lock_speed()
-
-            if self.infinite_potions_active:
-                self.apply_infinite_potions()
-
-            if self.infinite_roll_active:
-                self.apply_infinite_roll()
-
-            if self.lock_player_dmg_active:
-                self.apply_player_damage(self.locked_player_dmg_val)
-
-            if self.lock_xp_gain_active:
-                self.apply_xp_gain(self.locked_xp_gain_val)
-
-            # Talisman Growth Multiplier tracking
-            if self.talisman_growth_mult > 1.0:
-                equipped = self.mem.get_equipped_gear()
-                for it in equipped:
-                    if it["is_talisman"]:
-                        addr = it["item_addr"]
-                        cur_xp = self.mem.read_f32(addr + 0x6C)
-                        if addr in self.last_talisman_xp:
-                            delta = cur_xp - self.last_talisman_xp[addr]
-                            if delta > 0.0:
-                                bonus = delta * (self.talisman_growth_mult - 1.0)
-                                new_xp = cur_xp + bonus
-                                self.mem.write_f32(addr + 0x6C, new_xp)
-                                cur_xp = new_xp
-                        self.last_talisman_xp[addr] = cur_xp
-            else:
-                equipped = self.mem.get_equipped_gear()
-                for it in equipped:
-                    if it["is_talisman"]:
-                        addr = it["item_addr"]
-                        self.last_talisman_xp[addr] = self.mem.read_f32(addr + 0x6C)
-
-            # Update numeric labels across tabs
-            for tab_rows in [
-                [self.lbl_emeralds, self.lbl_springstone, self.lbl_ench, self.lbl_curr_mult],
-                [
-                    self.lbl_player_dmg,
-                    self.lbl_health,
-                    self.lbl_shield,
-                    self.lbl_art_cd,
-                    self.lbl_pot_cd,
-                    self.lbl_crit,
-                    self.lbl_melee_spd,
-                    self.lbl_reach,
-                    self.lbl_multi,
-                    self.lbl_souls,
-                    self.lbl_ammo,
-                    self.lbl_rapid,
-                ],
-                [self.lbl_move_mult, self.lbl_jump, self.lbl_grav, self.lbl_roll, self.lbl_time],
-                [
-                    self.lbl_xp_gain,
-                    self.lbl_master_loot,
-                    self.lbl_dup,
-                    self.lbl_max_payouts,
-                    self.lbl_loot,
-                    self.lbl_rarity,
-                    self.lbl_level,
-                    self.lbl_xp,
-                    self.lbl_vendor,
-                ],
-            ]:
-                for row_data in tab_rows:
-                    lbl, key, is_byte = row_data
-                    if is_byte:
-                        v = self.mem.read_byte(key)
-                        lbl.config(text=str(v) if v is not None else "---")
-                    else:
-                        v = self.mem.read_float(key)
-                        if v is not None:
-                            if key in [
-                                "emerald_increase_cur",
-                                "player_dmg_mult_cur",
-                                "xp_gain_mult_cur",
-                            ]:
-                                mult_disp = v + 1.0 if key == "emerald_increase_cur" else v
-                                lbl.config(text=f"{mult_disp:.1f}x")
-                            elif abs(v) >= 10:
-                                lbl.config(text=f"{v:,.1f}")
-                            else:
-                                lbl.config(text=f"{v:.2f}")
-                        else:
-                            lbl.config(text="---")
-
-        self._refresh_job = self.after(250, self.refresh_loop)
+        try:
+            self.refresh_values()
+        except Exception as exc:
+            self.reset_session()
+            self.show_error(exc)
+        finally:
+            if not self._closing:
+                self._refresh_job = self.after(250, self.refresh_loop)
 
 
 if __name__ == "__main__":

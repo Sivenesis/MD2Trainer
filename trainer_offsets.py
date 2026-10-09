@@ -8,8 +8,9 @@ FNAMES_BLOCKS_OFFSET = 0xADE3F90
 
 # Pointer chains: Base address + ENGINE_OFFSET -> chained pointer dereferences
 CHAINS = {
-    # Network / Session Authority
-    "player_role": ["5F", "2F8", "30", "0", "38", "1248"],
+    # AActor Role reflected at 0x168 in the inspected 1.1.1.0 build.
+    # These offsets remain build-dependent.
+    "player_role": ["168", "2F8", "30", "0", "38", "1248"],
     "player_remote_role": ["60", "2F8", "30", "0", "38", "1248"],
     # Currencies & Inventory (AttrSet [12] = ATR_Currency at 0x60)
     "emeralds_current": ["9C", "60", "10A8", "A20", "2F8", "30", "0", "38", "1248"],
