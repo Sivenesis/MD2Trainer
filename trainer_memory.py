@@ -367,7 +367,7 @@ class MemoryManager:
             # Equipment slots expose the first entry, as in v1.0.4. Inventory entries
             # are examined by item tag rather than assuming slot 7 contains talismans.
             for index in range(min(count, 1) if equipped else count):
-                address = data + index * 0xD8
+                address = data + index * 0xE8
                 name_index = self.read_u32(address)
                 name = self.get_fname(name_index)
                 if not name.startswith("SW.Item."):

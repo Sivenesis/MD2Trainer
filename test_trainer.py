@@ -16,8 +16,8 @@ import trainer_offsets as offsets
 
 class OffsetsTests(unittest.TestCase):
     def test_engine_offset_and_fnames_offset(self):
-        self.assertEqual(offsets.ENGINE_OFFSET, 0x0B0577C8)
-        self.assertEqual(offsets.FNAMES_BLOCKS_OFFSET, 0x0ADE3F90)
+        self.assertEqual(offsets.ENGINE_OFFSET, 0x0B0597C8)
+        self.assertEqual(offsets.FNAMES_BLOCKS_OFFSET, 0x0ADE5F90)
 
     def test_chains_structure(self):
         self.assertIn("emeralds_current", offsets.CHAINS)
@@ -39,8 +39,8 @@ class OffsetsTests(unittest.TestCase):
         self.assertIn("Rare", offsets.RARITY_INDICES)
         self.assertIn("Special", offsets.RARITY_INDICES)
         self.assertIn("Unique", offsets.RARITY_INDICES)
-        self.assertEqual(offsets.RARITY_INDICES["Common"], 5234547)
-        self.assertEqual(offsets.RARITY_INDICES["Special"], 5234598)
+        self.assertEqual(offsets.RARITY_INDICES["Common"], 5234439)
+        self.assertEqual(offsets.RARITY_INDICES["Special"], 5234490)
 
 
 class MemoryManagerUnitTests(unittest.TestCase):
