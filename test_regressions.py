@@ -1,4 +1,4 @@
-"""Regression tests for the v1.0.4 audit; never attach to the game."""
+"""Regression tests for trainer memory and GUI components; never attach to the game."""
 
 import math
 import unittest

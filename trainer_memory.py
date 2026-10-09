@@ -364,7 +364,7 @@ class MemoryManager:
             total_entries += count
             if count > 4096 or total_entries > 16384 or (count and not data):
                 raise MemoryAccessError("Invalid inventory item array; check game compatibility.")
-            # Equipment slots expose the first entry, as in v1.0.4. Inventory entries
+            # Equipment slots expose the first entry. Inventory entries
             # are examined by item tag rather than assuming slot 7 contains talismans.
             for index in range(min(count, 1) if equipped else count):
                 address = data + index * 0xE8

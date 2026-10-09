@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MINECRAFT DUNGEONS II - STANDALONE NATIVE TRAINER v1.0.4
+MINECRAFT DUNGEONS II - STANDALONE NATIVE TRAINER v1.0.5
 Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
 Direct Win32 Memory Access - Zero Debugger, Zero Watchdog Conflicts, Zero Dependencies.
 """
@@ -17,7 +17,7 @@ from trainer_widgets import FlowFrame
 class TrainerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Minecraft Dungeons II - Native Trainer v1.0.4")
+        self.title("Minecraft Dungeons II - Native Trainer v1.0.5")
         self.geometry("940x800")
         self.minsize(880, 720)
         self.configure(bg="#0b111b")
@@ -198,7 +198,7 @@ class TrainerApp(tk.Tk):
 
         title_lbl = tk.Label(
             top_bar,
-            text="MINECRAFT DUNGEONS II - NATIVE TRAINER v1.0.4",
+            text="MINECRAFT DUNGEONS II - NATIVE TRAINER v1.0.5",
             font=("Segoe UI", 13, "bold"),
             bg="#0b111b",
             fg="#64d8cb",
