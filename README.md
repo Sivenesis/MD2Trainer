@@ -1,6 +1,6 @@
-# Minecraft Dungeons II - Standalone Native Trainer v1.0.4
+# Minecraft Dungeons II Game Pass - Standalone Native Trainer v1.0.4
 
-A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeons-WinGDK-Shipping.exe`), designed for offline singleplayer use. It accesses game memory directly via Win32 Virtual Memory APIs without attaching debuggers, injecting DLLs, or triggering anti-tamper termination.
+A lightweight, standalone native GUI trainer for Minecraft Dungeons II on Game Pass (`Dungeons-WinGDK-Shipping.exe`), designed for offline singleplayer use. It accesses game memory directly via Win32 Virtual Memory APIs without attaching debuggers, injecting DLLs, or triggering anti-tamper termination.
 
 ---
 
