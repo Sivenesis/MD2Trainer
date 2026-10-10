@@ -26,7 +26,7 @@ A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeon
 
 ## How to Run
 
-1. Launch Minecraft Dungeons II and load into camp or a mission.
+1. Launch Minecraft Dungeons II and load into the game world.
 2. Run `run_trainer.bat` (or execute `python trainer_gui.py` in terminal).
 3. The trainer will automatically detect and attach to the game process.
 
