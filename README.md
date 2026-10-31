@@ -1,4 +1,4 @@
-# Minecraft Dungeons II Game Pass - Standalone Native Trainer v1.0.5
+# Minecraft Dungeons II Game Pass - Standalone Native Trainer v1.0.6
 
 A lightweight, standalone native GUI trainer for Minecraft Dungeons II (`Dungeons-WinGDK-Shipping.exe`), designed for offline singleplayer use. It accesses game memory directly via Win32 APIs without attaching a debugger or injecting DLLs.
 
@@ -43,7 +43,7 @@ Keep `trainer_gui.py`, `trainer_memory.py`, `trainer_offsets.py`, and `trainer_w
 
 ## Compatibility and limitations
 
-- Offsets remain build-dependent. Validated against Minecraft Dungeons II update 1.1.2.0 (`Dungeons-WinGDK-Shipping.exe`). Local authority cannot distinguish offline solo from hosting.
+- Offsets remain build-dependent. Validated against Minecraft Dungeons II update 1.1.3.0 (`Dungeons-WinGDK-Shipping.exe`). Local authority cannot distinguish offline solo from hosting.
 - Gear edits re-read the inventory and compare process/character, slot, address and item-name identity before writing. Inventory array sizes are bounded. Inventory talismans are recognized by their tags rather than a fixed slot number.
 - Rarity presets are checked against the running FName table before writing. If an index no longer identifies the expected rarity, the operation fails explicitly. The legacy `Unique` alias maps to `Special`; the interface labels it Special.
 - A successful memory write does **not** prove that gameplay events ran, perks unlocked, the server accepted a change, or a save persisted it. Earlier client-side balance/progression writes did not change the actual displayed balances. Currency freezes and new gear/talisman features still need build-specific in-game validation.

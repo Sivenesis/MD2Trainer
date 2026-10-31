@@ -3,12 +3,12 @@ Minecraft Dungeons II - Trainer Pointer Chains & Offset Definitions
 Target: Dungeons-WinGDK-Shipping.exe (Singleplayer / Offline)
 """
 
-ENGINE_OFFSET = 0x0B0597C8
-FNAMES_BLOCKS_OFFSET = 0xADE5F90
+ENGINE_OFFSET = 0x0B05A848
+FNAMES_BLOCKS_OFFSET = 0xADE7010
 
 # Pointer chains: Base address + ENGINE_OFFSET -> chained pointer dereferences
 CHAINS = {
-    # AActor Role reflected at 0x168 in the inspected 1.1.2.0 build.
+    # AActor Role reflected at 0x168 in the inspected 1.1.3.0 build.
     # These offsets remain build-dependent.
     "player_role": ["168", "2F8", "30", "0", "38", "1248"],
     "player_remote_role": ["60", "2F8", "30", "0", "38", "1248"],
@@ -133,8 +133,8 @@ CHAINS = {
 }
 
 RARITY_INDICES = {
-    "Common": 5234439,
-    "Rare": 5234472,
-    "Special": 5234490,
-    "Unique": 5234490,
+    "Common": 5237482,
+    "Rare": 5237515,
+    "Special": 5237533,
+    "Unique": 5237533,
 }
